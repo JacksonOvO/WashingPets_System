@@ -1,0 +1,280 @@
+﻿{
+    "slaveId":  1,
+    "baudRate":  9600,
+    "parity":  "None",
+    "dataBits":  8,
+    "stopBits":  "One",
+    "pollIntervalMs":  300,
+    "displayFilterSamples":  10,
+    "decimalPlaces":  1,
+    "unit":  "Kg",
+    "bipolar":  true,
+    "parameters":  [
+                       {
+                           "name":  "测量显示值",
+                           "register":  40001,
+                           "access":  "R",
+                           "min":  -32768,
+                           "max":  65535,
+                           "default":  0,
+                           "note":  "03读取；单极性0~65535，双极性-32768~32767"
+                       },
+                       {
+                           "name":  "小数点",
+                           "register":  40002,
+                           "access":  "RW",
+                           "min":  0,
+                           "max":  3,
+                           "default":  0,
+                           "note":  "0=整数, 1=0.0, 2=0.00, 3=0.000"
+                       },
+                       {
+                           "name":  "单位选择",
+                           "register":  40003,
+                           "access":  "RW",
+                           "min":  1,
+                           "max":  6,
+                           "default":  2,
+                           "note":  "1=MPa, 2=Kg, 3=T, 4=g, 5=N, 6=KN"
+                       },
+                       {
+                           "name":  "屏蔽值",
+                           "register":  40004,
+                           "access":  "RW",
+                           "min":  0,
+                           "max":  50,
+                           "default":  0,
+                           "note":  "小于该值输出为0"
+                       },
+                       {
+                           "name":  "采样频率",
+                           "register":  40005,
+                           "access":  "RW",
+                           "min":  1,
+                           "max":  7,
+                           "default":  5,
+                           "note":  "1=600pcs,2=300pcs,3=150pcs,4=75pcs,5=37.5pcs,6=18.75pcs,7=10pcs"
+                       },
+                       {
+                           "name":  "RC滤波时间常数",
+                           "register":  40006,
+                           "access":  "RW",
+                           "min":  1,
+                           "max":  6,
+                           "default":  2,
+                           "note":  "1=无,2=0.8,3=0.6,4=0.4,5=0.2,6=0.1"
+                       },
+                       {
+                           "name":  "485设备地址",
+                           "register":  40007,
+                           "access":  "RW",
+                           "min":  1,
+                           "max":  250,
+                           "default":  1,
+                           "note":  "修改后需按新地址通讯"
+                       },
+                       {
+                           "name":  "波特率",
+                           "register":  40008,
+                           "access":  "RW",
+                           "min":  0,
+                           "max":  6,
+                           "default":  3,
+                           "note":  "0=1200,1=2400,2=4800,3=9600,4=19200,5=38400,6=115200；需要重新初始化串口"
+                       },
+                       {
+                           "name":  "校验设置",
+                           "register":  40009,
+                           "access":  "RW",
+                           "min":  0,
+                           "max":  3,
+                           "default":  0,
+                           "note":  "0=N.8.1,1=N.8.2,2=O.8.1,3=E.8.1；需要重新初始化串口"
+                       },
+                       {
+                           "name":  "模拟量输出低对应显示值",
+                           "register":  40010,
+                           "access":  "RW",
+                           "min":  -32768,
+                           "max":  65535,
+                           "default":  0,
+                           "note":  "单极性0~65536，双极性-32768~32767"
+                       },
+                       {
+                           "name":  "模拟量输出高对应显示值",
+                           "register":  40011,
+                           "access":  "RW",
+                           "min":  -32768,
+                           "max":  65535,
+                           "default":  10000,
+                           "note":  "默认10000"
+                       },
+                       {
+                           "name":  "校准点1期望值",
+                           "register":  40012,
+                           "access":  "RW",
+                           "min":  -32768,
+                           "max":  65535,
+                           "default":  1000,
+                           "note":  "显示校准点1"
+                       },
+                       {
+                           "name":  "校准点2期望值",
+                           "register":  40013,
+                           "access":  "RW",
+                           "min":  -32768,
+                           "max":  65535,
+                           "default":  2000,
+                           "note":  "显示校准点2"
+                       },
+                       {
+                           "name":  "校准点3期望值",
+                           "register":  40014,
+                           "access":  "RW",
+                           "min":  -32768,
+                           "max":  65535,
+                           "default":  3000,
+                           "note":  "显示校准点3"
+                       },
+                       {
+                           "name":  "校准点4期望值",
+                           "register":  40015,
+                           "access":  "RW",
+                           "min":  -32768,
+                           "max":  65535,
+                           "default":  4000,
+                           "note":  "显示校准点4"
+                       },
+                       {
+                           "name":  "校准点5期望值",
+                           "register":  40016,
+                           "access":  "RW",
+                           "min":  -32768,
+                           "max":  65535,
+                           "default":  5000,
+                           "note":  "显示校准点5"
+                       },
+                       {
+                           "name":  "校准点数",
+                           "register":  40017,
+                           "access":  "RW",
+                           "min":  2,
+                           "max":  5,
+                           "default":  2,
+                           "note":  "范围2~5"
+                       },
+                       {
+                           "name":  "去皮",
+                           "register":  40018,
+                           "access":  "W",
+                           "min":  1,
+                           "max":  2,
+                           "default":  1,
+                           "note":  "写1=去皮，写2=清除去皮"
+                       },
+                       {
+                           "name":  "模拟量输出低校正值",
+                           "register":  40019,
+                           "access":  "RW",
+                           "min":  0,
+                           "max":  6000,
+                           "default":  0,
+                           "note":  "有符号整型"
+                       },
+                       {
+                           "name":  "模拟量输出高校正值",
+                           "register":  40020,
+                           "access":  "RW",
+                           "min":  0,
+                           "max":  6000,
+                           "default":  0,
+                           "note":  "有符号整型"
+                       },
+                       {
+                           "name":  "零点跟踪范围",
+                           "register":  40021,
+                           "access":  "RW",
+                           "min":  0,
+                           "max":  100,
+                           "default":  0,
+                           "note":  "设置变送器零点跟踪范围"
+                       },
+                       {
+                           "name":  "零点跟踪时间",
+                           "register":  40022,
+                           "access":  "RW",
+                           "min":  1,
+                           "max":  4,
+                           "default":  1,
+                           "note":  "1=5s,2=10s,3=15s,4=20s"
+                       },
+                       {
+                           "name":  "清零",
+                           "register":  40023,
+                           "access":  "W",
+                           "min":  17,
+                           "max":  17,
+                           "default":  17,
+                           "note":  "写0x0011清零；不要频繁操作"
+                       },
+                       {
+                           "name":  "输入极性设置",
+                           "register":  40024,
+                           "access":  "RW",
+                           "min":  1,
+                           "max":  2,
+                           "default":  1,
+                           "note":  "1=单极性，2=双极性"
+                       },
+                       {
+                           "name":  "输出信号类型",
+                           "register":  40025,
+                           "access":  "RW",
+                           "min":  0,
+                           "max":  4,
+                           "default":  0,
+                           "note":  "0=无模拟输出,1=0-5V,2=0-10V/±V,3=4-20mA,4=±8mA"
+                       },
+                       {
+                           "name":  "模拟量输出校准值选择",
+                           "register":  40033,
+                           "access":  "W",
+                           "min":  1,
+                           "max":  2,
+                           "default":  1,
+                           "note":  "1=低校准，2=高校准"
+                       },
+                       {
+                           "name":  "模拟量输出校准确认",
+                           "register":  40034,
+                           "access":  "W",
+                           "min":  41120,
+                           "max":  41120,
+                           "default":  41120,
+                           "note":  "写0xA0A0确认校准"
+                       },
+                       {
+                           "name":  "扩展清零",
+                           "register":  40097,
+                           "access":  "W",
+                           "min":  17,
+                           "max":  17,
+                           "default":  17,
+                           "note":  "说明书标注特殊添加功能，标准品可能没有"
+                       }
+                   ],
+    "compensationPoints":  [
+                               {
+                                   "display":  19.8,
+                                   "actual":  20.15
+                               },
+                               {
+                                   "display":  1000,
+                                   "actual":  1000
+                               },
+                               {
+                                   "display":  2000,
+                                   "actual":  2000
+                               }
+                           ]
+}

@@ -1,0 +1,191 @@
+<mxfile host="app.diagrams.net" modified="2026-07-29T00:00:00.000Z" agent="Codex" version="24.7.17" type="device">
+  <diagram id="smart-store-topology" name="智能门店设备拓扑图">
+    <mxGraphModel dx="1800" dy="1200" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1700" pageHeight="1200" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+
+        <mxCell id="title" value="智能门店设备拓扑图（按采购需求单整理）" style="text;html=1;strokeColor=none;fillColor=none;fontSize=26;fontStyle=1;align=left;verticalAlign=middle;fontColor=#0f172a;" vertex="1" parent="1">
+          <mxGeometry x="50" y="25" width="760" height="40" as="geometry"/>
+        </mxCell>
+        <mxCell id="note" value="布局说明：上方为网络出口与平台；中间为核心设备；下方按设备类型分列，减少交叉线。" style="text;html=1;strokeColor=none;fillColor=none;fontSize=13;align=left;verticalAlign=middle;fontColor=#475569;" vertex="1" parent="1">
+          <mxGeometry x="50" y="68" width="900" height="24" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="zone-core" value="网络出口 / 核心控制" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8fafc;strokeColor=#cbd5e1;fontColor=#334155;fontSize=14;fontStyle=1;align=left;verticalAlign=top;spacingLeft=12;spacingTop=8;" vertex="1" parent="1">
+          <mxGeometry x="50" y="105" width="1600" height="285" as="geometry"/>
+        </mxCell>
+        <mxCell id="zone-wifi" value="Wi-Fi 终端" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ecfeff;strokeColor=#67e8f9;fontColor=#155e75;fontSize=14;fontStyle=1;align=left;verticalAlign=top;spacingLeft=12;spacingTop=8;" vertex="1" parent="1">
+          <mxGeometry x="50" y="430" width="300" height="650" as="geometry"/>
+        </mxCell>
+        <mxCell id="zone-poe" value="PoE 视频监控" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff7ed;strokeColor=#fdba74;fontColor=#7c2d12;fontSize=14;fontStyle=1;align=left;verticalAlign=top;spacingLeft=12;spacingTop=8;" vertex="1" parent="1">
+          <mxGeometry x="385" y="430" width="300" height="650" as="geometry"/>
+        </mxCell>
+        <mxCell id="zone-rk" value="RK3588 外设" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f3ff;strokeColor=#c4b5fd;fontColor=#3b0764;fontSize=14;fontStyle=1;align=left;verticalAlign=top;spacingLeft=12;spacingTop=8;" vertex="1" parent="1">
+          <mxGeometry x="720" y="430" width="420" height="650" as="geometry"/>
+        </mxCell>
+        <mxCell id="zone-stm" value="STM32 从控 / 门禁 / 报警 / 电源" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fdf2f8;strokeColor=#f9a8d4;fontColor=#831843;fontSize=14;fontStyle=1;align=left;verticalAlign=top;spacingLeft=12;spacingTop=8;" vertex="1" parent="1">
+          <mxGeometry x="1175" y="430" width="475" height="650" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="internet" value="互联网 / 运营商 5G" style="ellipse;whiteSpace=wrap;html=1;fillColor=#dbeafe;strokeColor=#2563eb;fontColor=#1e3a8a;fontSize=14;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="130" y="190" width="165" height="72" as="geometry"/>
+        </mxCell>
+        <mxCell id="router" value="5G插卡路由器&#xa;5G/4G SIM + Wi-Fi + 千兆网口" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e0f2fe;strokeColor=#0284c7;fontColor=#0c4a6e;fontSize=13;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="420" y="178" width="205" height="96" as="geometry"/>
+        </mxCell>
+        <mxCell id="wifi-hub" value="门店 Wi-Fi 网络" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ccfbf1;strokeColor=#0d9488;fontColor=#134e4a;fontSize=13;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="125" y="335" width="180" height="62" as="geometry"/>
+        </mxCell>
+        <mxCell id="poe" value="8口千兆 PoE 交换机&#xa;摄像头、RK3588 接入" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef3c7;strokeColor=#d97706;fontColor=#78350f;fontSize=13;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="455" y="320" width="205" height="82" as="geometry"/>
+        </mxCell>
+        <mxCell id="rk3588" value="主控 RK3588&#xa;双 HDMI + RS232/RS485 + USB" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ede9fe;strokeColor=#7c3aed;fontColor=#3b0764;fontSize=14;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="825" y="178" width="235" height="96" as="geometry"/>
+        </mxCell>
+        <mxCell id="stm32" value="从控 STM32 单片机&#xa;24V 供电，15+ GPIO，232/485" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce7f3;strokeColor=#db2777;fontColor=#831843;fontSize=13;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1255" y="178" width="240" height="96" as="geometry"/>
+        </mxCell>
+        <mxCell id="cloud" value="后台平台 / 远程运维&#xa;HTTP / MQTT / TCP / RTSP" style="ellipse;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#16a34a;fontColor=#14532d;fontSize=13;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1420" y="315" width="190" height="90" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="ir" value="Wi-Fi 红外控制器 x1&#xa;HTTP/MQTT/TCP" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ecfeff;strokeColor=#0891b2;fontColor=#164e63;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="110" y="480" width="180" height="72" as="geometry"/>
+        </mxCell>
+        <mxCell id="ac" value="空调&#xa;2匹，红外遥控" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f0fdfa;strokeColor=#0d9488;fontColor=#134e4a;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="110" y="575" width="180" height="66" as="geometry"/>
+        </mxCell>
+        <mxCell id="temp" value="Wi-Fi 温湿度传感器 x1&#xa;实时上报" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ecfeff;strokeColor=#0891b2;fontColor=#164e63;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="110" y="690" width="180" height="72" as="geometry"/>
+        </mxCell>
+        <mxCell id="smoke" value="Wi-Fi 烟雾传感器 x1&#xa;烟雾/气体实时上报" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ecfeff;strokeColor=#0891b2;fontColor=#164e63;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="110" y="805" width="180" height="72" as="geometry"/>
+        </mxCell>
+        <mxCell id="pos" value="支付收银一体机 x1&#xa;安卓，Wi-Fi/蓝牙/USB/扫码" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ecfeff;strokeColor=#0891b2;fontColor=#164e63;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="95" y="920" width="210" height="78" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="cam-entry" value="入口摄像头 x1&#xa;400万 PoE / RTSP / ONVIF" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff7ed;strokeColor=#f97316;fontColor=#7c2d12;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="445" y="515" width="185" height="76" as="geometry"/>
+        </mxCell>
+        <mxCell id="cam-area" value="货架区 / 收银摄像头 x5&#xa;200万 PoE / RTSP / ONVIF" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff7ed;strokeColor=#f97316;fontColor=#7c2d12;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="445" y="655" width="185" height="78" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="display" value="商显显示器 x1&#xa;32英寸 2K，HDMI" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eff6ff;strokeColor=#3b82f6;fontColor=#1e3a8a;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="780" y="485" width="170" height="72" as="geometry"/>
+        </mxCell>
+        <mxCell id="access-display" value="门禁触摸显示器 x1&#xa;7.5英寸，HDMI + 触摸线" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eff6ff;strokeColor=#3b82f6;fontColor=#1e3a8a;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="930" y="625" width="180" height="82" as="geometry"/>
+        </mxCell>
+        <mxCell id="disk-box" value="3.5英寸硬盘盒&#xa;USB 3.0 接 RK3588" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f1f5f9;strokeColor=#64748b;fontColor=#334155;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="775" y="760" width="180" height="72" as="geometry"/>
+        </mxCell>
+        <mxCell id="disk" value="监控硬盘 x1&#xa;2TB SATA 监控级" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8fafc;strokeColor=#64748b;fontColor=#334155;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="775" y="905" width="180" height="72" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="alarm" value="声光语音报警器 x1&#xa;24V，RS485 控制" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fee2e2;strokeColor=#dc2626;fontColor=#7f1d1d;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="1225" y="485" width="185" height="72" as="geometry"/>
+        </mxCell>
+        <mxCell id="relay" value="3.3V 固态继电器模组&#xa;10路，控制 220V 负载/门锁" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fae8ff;strokeColor=#c026d3;fontColor=#701a75;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="1425" y="485" width="185" height="82" as="geometry"/>
+        </mxCell>
+        <mxCell id="exit-button" value="门禁出门按钮 x1&#xa;单片机输入点位" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fdf2f8;strokeColor=#db2777;fontColor=#831843;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="1225" y="640" width="185" height="72" as="geometry"/>
+        </mxCell>
+        <mxCell id="lock" value="电磁锁 x1&#xa;24V，门磁反馈" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fdf2f8;strokeColor=#db2777;fontColor=#831843;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="1425" y="640" width="185" height="72" as="geometry"/>
+        </mxCell>
+        <mxCell id="power" value="直流开关电源 x1&#xa;24V 导轨安装" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fefce8;strokeColor=#ca8a04;fontColor=#713f12;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="1330" y="840" width="180" height="72" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="legend" value="图例：蓝=网络/平台，橙=PoE视频，紫=RK3588，粉=STM32/门禁，青=Wi-Fi终端，灰=存储，黄=电源。虚线为数据上报或辅助供电。" style="text;html=1;strokeColor=none;fillColor=none;fontSize=12;fontColor=#475569;align=left;" vertex="1" parent="1">
+          <mxGeometry x="55" y="1115" width="1200" height="30" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="e-internet-router" value="5G/4G" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#2563eb;fontColor=#2563eb;" edge="1" parent="1" source="internet" target="router">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-router-wifi" value="Wi-Fi" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#0891b2;fontColor=#155e75;" edge="1" parent="1" source="router" target="wifi-hub">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-router-poe" value="千兆网口" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#d97706;fontColor=#78350f;" edge="1" parent="1" source="router" target="poe">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-poe-rk" value="网线" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#7c3aed;fontColor=#4c1d95;" edge="1" parent="1" source="poe" target="rk3588">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-rk-stm" value="RS232 / RS485" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#db2777;fontColor=#831843;" edge="1" parent="1" source="rk3588" target="stm32">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-router-cloud" value="公网 / VPN / API" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#16a34a;fontColor=#166534;" edge="1" parent="1" source="router" target="cloud">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-rk-cloud" value="视频/数据/告警上传" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;dashed=1;strokeColor=#16a34a;fontColor=#166534;" edge="1" parent="1" source="rk3588" target="cloud">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="e-wifi-ir" value="Wi-Fi" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#0891b2;fontColor=#155e75;" edge="1" parent="1" source="wifi-hub" target="ir">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-ir-ac" value="红外" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#0d9488;fontColor=#134e4a;" edge="1" parent="1" source="ir" target="ac">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-wifi-temp" value="Wi-Fi 上报" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#0891b2;fontColor=#155e75;" edge="1" parent="1" source="wifi-hub" target="temp">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-wifi-smoke" value="Wi-Fi 上报" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#0891b2;fontColor=#155e75;" edge="1" parent="1" source="wifi-hub" target="smoke">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-wifi-pos" value="Wi-Fi / API" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#0891b2;fontColor=#155e75;" edge="1" parent="1" source="wifi-hub" target="pos">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="e-poe-cam-entry" value="PoE 网线" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#f97316;fontColor=#7c2d12;" edge="1" parent="1" source="poe" target="cam-entry">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-poe-cam-area" value="PoE 网线" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#f97316;fontColor=#7c2d12;" edge="1" parent="1" source="poe" target="cam-area">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="e-rk-display" value="HDMI" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#3b82f6;fontColor=#1e3a8a;" edge="1" parent="1" source="rk3588" target="display">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-rk-access-display" value="HDMI + 触摸线" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#3b82f6;fontColor=#1e3a8a;" edge="1" parent="1" source="rk3588" target="access-display">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-rk-diskbox" value="USB 3.0" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#64748b;fontColor=#334155;" edge="1" parent="1" source="rk3588" target="disk-box">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-diskbox-disk" value="SATA" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#64748b;fontColor=#334155;" edge="1" parent="1" source="disk-box" target="disk">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="e-stm-alarm" value="RS485 / 24V" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#dc2626;fontColor=#7f1d1d;" edge="1" parent="1" source="stm32" target="alarm">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-stm-relay" value="GPIO 3.3V" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#c026d3;fontColor=#701a75;" edge="1" parent="1" source="stm32" target="relay">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-stm-button" value="输入点位" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#db2777;fontColor=#831843;" edge="1" parent="1" source="exit-button" target="stm32">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-relay-lock" value="继电器控制 24V" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#db2777;fontColor=#831843;" edge="1" parent="1" source="relay" target="lock">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-power-stm" value="24V 供电" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#ca8a04;fontColor=#713f12;" edge="1" parent="1" source="power" target="stm32">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-power-alarm" value="24V" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;dashed=1;strokeColor=#ca8a04;fontColor=#713f12;" edge="1" parent="1" source="power" target="alarm">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e-power-lock" value="24V" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;dashed=1;strokeColor=#ca8a04;fontColor=#713f12;" edge="1" parent="1" source="power" target="lock">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
