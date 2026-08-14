@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=洗宠机 Linux 工作台
+Comment=STM32 smart debug workbench for PawClean
+Exec=/usr/bin/pawclean-workbench
+Icon=pawclean-workbench
+StartupWMClass=pawclean-workbench
+Terminal=false
+Categories=Development;Utility;
