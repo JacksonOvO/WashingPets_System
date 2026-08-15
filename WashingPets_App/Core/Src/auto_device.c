@@ -46,6 +46,7 @@ static AutoSensorData sensor_data;
 static uint32_t sensor_lock_primask;
 static volatile uint8_t command_flags[AUTO_COMMAND_COUNT];
 static volatile uint8_t recipe_selected_flag;
+static volatile uint8_t bath_liquid_selection;
 static volatile uint8_t paused_flag;
 static volatile uint8_t stop_requested_flag;
 static volatile AutoFaultCode last_fault_code;
@@ -211,6 +212,7 @@ void AutoDevice_Init(void)
   sensor_lock_primask = 0U;
   memset((void *)command_flags, 0, sizeof(command_flags));
   recipe_selected_flag = 0U;
+  bath_liquid_selection = 0U;
   paused_flag = 0U;
   stop_requested_flag = 0U;
   process_pause_start_tick = 0U;
@@ -515,6 +517,19 @@ uint8_t AutoDevice_ConsumeRecipeSelectedFlag(void)
   uint8_t result = recipe_selected_flag;
   recipe_selected_flag = 0U;
   return result;
+}
+
+void AutoDevice_SetBathLiquidSelection(uint8_t selection)
+{
+  if (selection <= 3U)
+  {
+    bath_liquid_selection = selection;
+  }
+}
+
+uint8_t AutoDevice_GetBathLiquidSelection(void)
+{
+  return bath_liquid_selection;
 }
 
 /*

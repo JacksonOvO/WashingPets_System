@@ -8,6 +8,51 @@ static uint32_t feed_start_tick;
 static uint32_t flush_start_tick;
 static uint32_t bath_step_tick;
 
+static AutoOutputPoint selected_bath_liquid_output(void)
+{
+  switch (AutoDevice_GetBathLiquidSelection())
+  {
+    case 1U:
+      return AUTO_OUTPUT_FRAGRANCE_VALVE;
+    case 2U:
+      return AUTO_OUTPUT_SOFTENER_VALVE;
+    case 3U:
+      return AUTO_OUTPUT_DEODORIZER_VALVE;
+    case 0U:
+    default:
+      return AUTO_OUTPUT_BATH_LIQUID_VALVE;
+  }
+}
+
+static void set_selected_bath_liquid_valve(uint8_t enabled)
+{
+  (void)AutoDevice_SetOutput(AUTO_OUTPUT_BATH_LIQUID_VALVE, 0U);
+  (void)AutoDevice_SetOutput(AUTO_OUTPUT_FRAGRANCE_VALVE, 0U);
+  (void)AutoDevice_SetOutput(AUTO_OUTPUT_SOFTENER_VALVE, 0U);
+  (void)AutoDevice_SetOutput(AUTO_OUTPUT_DEODORIZER_VALVE, 0U);
+
+  if (enabled != 0U)
+  {
+    (void)AutoDevice_SetOutput(selected_bath_liquid_output(), 1U);
+  }
+}
+
+static AutoInputPoint selected_bath_liquid_low_input(void)
+{
+  switch (AutoDevice_GetBathLiquidSelection())
+  {
+    case 1U:
+      return AUTO_INPUT_FRAGRANCE_LOW;
+    case 2U:
+      return AUTO_INPUT_SOFTENER_LOW;
+    case 3U:
+      return AUTO_INPUT_DEODORIZER_LOW;
+    case 0U:
+    default:
+      return AUTO_INPUT_BATH_LIQUID_LOW;
+  }
+}
+
 static void BathReset(void)
 {
   bath_start_tick = 0U;
@@ -48,10 +93,7 @@ static HAL_StatusTypeDef BathResume(uint16_t step_id)
 
   if (step_id < 90U)
   {
-    if (AutoDevice_SetOutput(AUTO_OUTPUT_DISINFECTANT_VALVE, 1U) != HAL_OK)
-    {
-      return HAL_ERROR;
-    }
+    set_selected_bath_liquid_valve(1U);
     if ((step_id >= 60U) &&
         (AutoDevice_SetOutput(AUTO_OUTPUT_SCREW_PUMP, 1U) != HAL_OK))
     {
@@ -64,7 +106,7 @@ static HAL_StatusTypeDef BathResume(uint16_t step_id)
 static void stop_bath(void)
 {
   (void)AutoDevice_SetOutput(AUTO_OUTPUT_SCREW_PUMP, 0U);
-  (void)AutoDevice_SetOutput(AUTO_OUTPUT_BATH_LIQUID_VALVE, 0U);
+  set_selected_bath_liquid_valve(0U);
   (void)AutoDevice_SetBoosterPumpRunning(0U);
   AutoDevice_SetAllShowerValves(0U);
 }
@@ -87,7 +129,7 @@ static AppFlowStepResult CheckLiquid(AppFlowContext *ctx, const AppFlowStep *ste
 {
   (void)ctx;
   (void)step;
-  return (AutoDevice_ReadInput(AUTO_INPUT_BATH_LIQUID_LOW) == 0U) ?
+  return (AutoDevice_ReadInput(selected_bath_liquid_low_input()) == 0U) ?
          APP_FLOW_STEP_DONE :
          (AutoDevice_SetFault(AUTO_FAULT_BATH_LIQUID_LOW),
           APP_FLOW_STEP_FAIL);
@@ -101,7 +143,7 @@ static AppFlowStepResult WaterPathOn(AppFlowContext *ctx, const AppFlowStep *ste
   AutoDevice_SetAllShowerValves(1U);
   (void)AutoDevice_SetBoosterPumpPercent(recipe->bath_pressure_level);
   (void)AutoDevice_SetBoosterPumpRunning(1U);
-  (void)AutoDevice_SetOutput(AUTO_OUTPUT_DISINFECTANT_VALVE, 1U);
+  set_selected_bath_liquid_valve(1U);
   return APP_FLOW_STEP_DONE;
 }
 
@@ -242,7 +284,7 @@ static AppFlowStepResult LiquidOff(AppFlowContext *ctx, const AppFlowStep *step)
   (void)ctx;
   (void)step;
   (void)AutoDevice_SetOutput(AUTO_OUTPUT_SCREW_PUMP, 0U);
-  (void)AutoDevice_SetOutput(AUTO_OUTPUT_DISINFECTANT_VALVE, 0U);
+  set_selected_bath_liquid_valve(0U);
   (void)AutoDevice_SetBoosterPumpPercent(recipe->bath_pressure_level);
   (void)AutoDevice_SetBoosterPumpRunning(1U);
   flush_start_tick = AutoDevice_GetProcessTick();

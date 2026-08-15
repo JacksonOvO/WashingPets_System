@@ -26,6 +26,8 @@
 #define COMM485_PROP_VALVE_REG_ANGLE   0x0001U
 #define COMM485_PROP_VALVE_MAX_ANGLE   90U
 #define COMM485_BOOSTER_REG_FREQ       0x0000U
+#define COMM485_BOOSTER_REG_FEEDBACK_PRESSURE 0x1010U
+#define COMM485_BOOSTER_REG_SET_PRESSURE      0x101FU
 #define COMM485_BOOSTER_REG_CONTROL    0x2000U
 #define COMM485_BOOSTER_CMD_FORWARD    0x0001U
 #define COMM485_BOOSTER_CMD_STOP       0x0006U
@@ -70,6 +72,9 @@ static volatile uint8_t last_proportional_valve_angle;
 static volatile uint8_t pending_proportional_valve_angle;
 static volatile uint8_t pending_proportional_valve_angle_valid;
 static volatile uint8_t last_booster_pump_percent;
+static volatile uint8_t booster_pump_feedback_pressure_x10;
+static volatile uint8_t booster_pump_feedback_valid;
+static volatile uint32_t booster_pump_feedback_tick;
 static volatile uint8_t pending_booster_pump_percent;
 static volatile uint8_t pending_booster_pump_percent_valid;
 static volatile uint8_t last_booster_pump_running;
@@ -107,6 +112,8 @@ static void dry_run_fill_environment(TaskComm485EnvironmentData *data)
 
 static void dry_run_zero_actuator_cache(void)
 {
+  uint32_t now = HAL_GetTick();
+
   memset((void *)last_percent_by_station, 0, sizeof(last_percent_by_station));
   memset((void *)pending_percent_by_station, 0, sizeof(pending_percent_by_station));
   memset((void *)pending_percent_valid_by_station, 0, sizeof(pending_percent_valid_by_station));
@@ -114,6 +121,9 @@ static void dry_run_zero_actuator_cache(void)
   pending_proportional_valve_angle = 0U;
   pending_proportional_valve_angle_valid = 0U;
   last_booster_pump_percent = 0U;
+  booster_pump_feedback_pressure_x10 = 0U;
+  booster_pump_feedback_valid = 1U;
+  booster_pump_feedback_tick = now;
   pending_booster_pump_percent = 0U;
   pending_booster_pump_percent_valid = 0U;
   last_booster_pump_running = 0U;
@@ -350,6 +360,18 @@ uint8_t TaskComm485_GetLastBoosterPumpPercent(void)
   return last_booster_pump_percent;
 }
 
+uint8_t TaskComm485_GetBoosterPumpFeedbackPressure(void)
+{
+  uint32_t tick = booster_pump_feedback_tick;
+
+  if ((booster_pump_feedback_valid == 0U) ||
+      ((HAL_GetTick() - tick) > COMM485_SENSOR_STALE_MS))
+  {
+    return 0U;
+  }
+  return booster_pump_feedback_pressure_x10;
+}
+
 uint8_t TaskComm485_GetLastBoosterPumpRunning(void)
 {
   return last_booster_pump_running;
@@ -433,6 +455,9 @@ static HAL_StatusTypeDef request_set_booster_pump_percent(uint8_t percent,
     percent = 100U;
   }
   last_booster_pump_percent = percent;
+  booster_pump_feedback_pressure_x10 = percent;
+  booster_pump_feedback_valid = 1U;
+  booster_pump_feedback_tick = HAL_GetTick();
   pending_booster_pump_percent = percent;
   pending_booster_pump_percent_valid = 0U;
   return HAL_OK;
@@ -657,6 +682,7 @@ static HAL_StatusTypeDef apply_proportional_valve_angle(uint8_t angle)
 static HAL_StatusTypeDef apply_booster_pump_percent(uint8_t percent)
 {
   uint16_t value;
+  uint16_t readback;
   ThyristorStatus status;
 
   if (percent > 100U)
@@ -667,16 +693,25 @@ static HAL_StatusTypeDef apply_booster_pump_percent(uint8_t percent)
   status = Thyristor_WriteRegister(RS485_STATION_BOOSTER_PUMP,
                                    COMM485_BOOSTER_REG_FREQ,
                                    value);
-  if (status == THYRISTOR_OK)
+  if (status != THYRISTOR_OK)
   {
-    last_booster_pump_percent = percent;
-    if (pending_booster_pump_percent == percent)
-    {
-      pending_booster_pump_percent_valid = 0U;
-    }
-    return HAL_OK;
+    return HAL_ERROR;
   }
-  return HAL_ERROR;
+
+  status = Thyristor_ReadRegister(RS485_STATION_BOOSTER_PUMP,
+                                  COMM485_BOOSTER_REG_SET_PRESSURE,
+                                  &readback);
+  if ((status != THYRISTOR_OK) || ((uint8_t)readback != percent))
+  {
+    return HAL_ERROR;
+  }
+
+  last_booster_pump_percent = percent;
+  if (pending_booster_pump_percent == percent)
+  {
+    pending_booster_pump_percent_valid = 0U;
+  }
+  return HAL_OK;
 }
 
 static HAL_StatusTypeDef apply_booster_pump_running(uint8_t enabled)
@@ -1004,6 +1039,27 @@ static void process_ozone_sensor(void)
   (void)osMutexRelease(environment_mutex);
 }
 
+static void process_booster_pump_feedback(void)
+{
+  uint16_t pressure_x10;
+  uint32_t now = HAL_GetTick();
+
+  if (Thyristor_ReadRegister(RS485_STATION_BOOSTER_PUMP,
+                             COMM485_BOOSTER_REG_FEEDBACK_PRESSURE,
+                             &pressure_x10) == THYRISTOR_OK)
+  {
+    booster_pump_feedback_pressure_x10 = (pressure_x10 > 100U) ?
+                                         100U : (uint8_t)pressure_x10;
+    booster_pump_feedback_tick = now;
+    booster_pump_feedback_valid = 1U;
+  }
+  else if ((booster_pump_feedback_valid != 0U) &&
+           ((now - booster_pump_feedback_tick) > COMM485_SENSOR_STALE_MS))
+  {
+    booster_pump_feedback_valid = 0U;
+  }
+}
+
 static void process_temperature_module(void)
 {
   TemperatureModuleData data = {0};
@@ -1055,12 +1111,20 @@ static void process_next_sensor(void)
       process_incab_trh_sensor();
       break;
 
-    default:
+    case 3U:
       process_ozone_sensor();
+      break;
+
+    default:
+      process_booster_pump_feedback();
       break;
   }
 
-  sensor_poll_slot = (uint8_t)((sensor_poll_slot + 1U) & 0x03U);
+  ++sensor_poll_slot;
+  if (sensor_poll_slot >= 5U)
+  {
+    sensor_poll_slot = 0U;
+  }
 #endif
 }
 

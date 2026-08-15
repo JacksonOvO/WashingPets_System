@@ -6,7 +6,7 @@
 static void WashReadyInit(void);
 static void WashReadyReset(void);
 
-static AppFlowStepResult GlassHeatOn(AppFlowContext *, const AppFlowStep *);
+static AppFlowStepResult RequestRecipeSelection(AppFlowContext *, const AppFlowStep *);
 static AppFlowStepResult WaitRecipeSelected(AppFlowContext *, const AppFlowStep *);
 static AppFlowStepResult WaitTankHighLevel(AppFlowContext *, const AppFlowStep *);
 static AppFlowStepResult WaitTankTempReady(AppFlowContext *, const AppFlowStep *);
@@ -14,8 +14,8 @@ static AppFlowStepResult StopReadyDevices(AppFlowContext *, const AppFlowStep *)
 static AppFlowStepResult ReportReady(AppFlowContext *, const AppFlowStep *);
 
 static const AppFlowStep steps[] = {
-  AUTO_STEP(10, "GLASS_HEAT_ON", 0U, 0U, GlassHeatOn, "打开正门电加热玻璃（跳过-无电加热功能）"),
-  AUTO_STEP(20, "WAIT_RECIPE_SELECTED", 0U, 0U, WaitRecipeSelected, "等待上位机下发配方选择信号"),
+  AUTO_STEP(10, "REQUEST_RECIPE_SELECTION", 0U, 0U, RequestRecipeSelection, "请求上位机选择本次运行配方和沐浴液"),
+  AUTO_STEP(20, "WAIT_RECIPE_SELECTED", 0U, 0U, WaitRecipeSelected, "等待上位机下发配方和沐浴液选择信号"),
   AUTO_STEP(30, "WAIT_TANK_HIGH_LEVEL", 0U, 500U, WaitTankHighLevel, "等待水箱后台温控补水到高液位"),
   AUTO_STEP(40, "WAIT_TANK_TEMP_READY", 0U, 500U, WaitTankTempReady, "等待水箱后台温控按当前配方调温达标"),
   AUTO_STEP(170, "STOP_WASH_READY_DEVICES", 0U, 0U, StopReadyDevices, "关闭洗前准备流程自身使用的输出"),
@@ -50,10 +50,11 @@ static AppFlowStepResult jump(AppFlowContext *ctx, uint16_t id)
   return (AppFlow_JumpToStep(ctx, id) != 0U) ? APP_FLOW_STEP_JUMP : APP_FLOW_STEP_FAIL;
 }
 
-static AppFlowStepResult GlassHeatOn(AppFlowContext *ctx, const AppFlowStep *step)
+static AppFlowStepResult RequestRecipeSelection(AppFlowContext *ctx, const AppFlowStep *step)
 {
   (void)ctx;
   (void)step;
+  AutoDevice_RequestHostInteraction(6U);
   return APP_FLOW_STEP_DONE;
 }
 

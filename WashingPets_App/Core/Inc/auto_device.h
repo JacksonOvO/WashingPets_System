@@ -77,7 +77,7 @@ typedef enum
   AUTO_OUTPUT_FRAGRANCE_VALVE,              /* OUT14-PB7：芬香液阀。 */
   AUTO_OUTPUT_SOFTENER_VALVE,               /* OUT15-PB8：柔顺液阀。 */
   AUTO_OUTPUT_DEODORIZER_VALVE,             /* OUT16-PB9：除螨液阀。 */
-  AUTO_OUTPUT_CONDITIONER_VALVE,            /* OUT17-PE0：护毛素阀。 */
+  AUTO_OUTPUT_CONDITIONER_VALVE,            /* OUT17-PE0：清洁液阀。 */
   AUTO_OUTPUT_DISINFECTANT_VALVE,           /* OUT18-PE1：消毒液阀。 */
   AUTO_OUTPUT_UV_LAMP,                       /* OUT19-PB3：紫外线灯。 */
   AUTO_OUTPUT_SELF_CLEAN_TOP_VALVE,         /* OUT20-PE2：自清洁顶部阀。 */
@@ -225,6 +225,8 @@ void AutoDevice_SetCommand(AutoCommand command);
 uint8_t AutoDevice_ConsumeCommand(AutoCommand command);
 void AutoDevice_SetRecipeSelectedFlag(void);
 uint8_t AutoDevice_ConsumeRecipeSelectedFlag(void);
+void AutoDevice_SetBathLiquidSelection(uint8_t selection);
+uint8_t AutoDevice_GetBathLiquidSelection(void);
 void AutoDevice_ClearProcessSignals(void);
 void AutoDevice_SetPaused(uint8_t paused);
 void AutoDevice_SetStopRequested(uint8_t requested);

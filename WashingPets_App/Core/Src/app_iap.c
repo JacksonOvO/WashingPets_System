@@ -686,7 +686,7 @@ static void send_telemetry(uint8_t sequence)
   payload_out[29] = TaskComm485_GetLastPercent(RS485_STATION_BOTTOM_HEATER);
   payload_out[30] = TaskComm485_GetLastProportionalValveAngle();
   payload_out[31] = TaskComm485_GetLastPercent(RS485_STATION_TOP_EXHAUST_FAN);
-  payload_out[32] = TaskComm485_GetLastBoosterPumpPercent();
+  payload_out[32] = TaskComm485_GetBoosterPumpFeedbackPressure();
   /* 尾部追加流程时间统计：总剩余时间和当前小流程剩余时间，单位毫秒，uint32 小端。 */
   write_u32_le(&payload_out[33], AutoProcess_GetRemainingTimeMs());
   write_u32_le(&payload_out[37], AutoProcess_GetCurrentStageRemainingTimeMs());
@@ -1130,6 +1130,8 @@ static void handle_process_interaction(uint8_t sequence,
   uint8_t interaction_type;
   uint8_t result;
   uint16_t value;
+  uint8_t recipe_id;
+  uint8_t bath_liquid_selection;
 
   if (length < 8U)
   {
@@ -1197,13 +1199,17 @@ static void handle_process_interaction(uint8_t sequence,
       break;
 
     case 6U:
-      if (value >= APP_RECIPE_COUNT)
+      recipe_id = (uint8_t)(value & 0x00FFU);
+      bath_liquid_selection = (uint8_t)((value >> 8) & 0x00FFU);
+      if ((recipe_id >= APP_RECIPE_COUNT) ||
+          (bath_liquid_selection > 3U))
       {
-      send_nack(APP_BUSINESS_CMD_PROCESS_INTERACT, sequence,
+        send_nack(APP_BUSINESS_CMD_PROCESS_INTERACT, sequence,
                   IAP_ERR_CONFIG, sequence, request_id);
         return;
       }
-      AppParam_SelectActiveRecipe((AppRecipeId)value);
+      AppParam_SelectActiveRecipe((AppRecipeId)recipe_id);
+      AutoDevice_SetBathLiquidSelection(bath_liquid_selection);
       AutoDevice_SetRecipeSelectedFlag();
       break;
 

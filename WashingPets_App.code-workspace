@@ -1,18 +1,23 @@
 {
 	"folders": [
 		{
-			"path": "WashingPets_App"
-		},
-		{
-			"path": "WashingPets_Bootloader"
+			"name": "WashingPets_System",
+			"path": "."
 		}
 	],
 	"settings": {
+		"cmake.cmakePath": "cube-cmake",
+		"cmake.generator": "Ninja",
+		"cmake.useCMakePresets": "always",
+		"cmake.sourceDirectory": "${workspaceFolder}/WashingPets_App",
+		"cmake.configureArgs": [
+			"-DCMAKE_COMMAND=cube-cmake"
+		],
+		"stm32cube-ide-clangd.path": "cube",
 		"stm32cube-ide-clangd.arguments": [
 			"starm-clangd",
 			"--query-driver=${env:CUBE_BUNDLE_PATH}/gnu-tools-for-stm32/14.3.1+st.2/bin/arm-none-eabi-gcc*",
 			"--query-driver=${env:CUBE_BUNDLE_PATH}/gnu-tools-for-stm32/14.3.1+st.2/bin/arm-none-eabi-g++*"
-		],
-		"stm32cube-ide-clangd.path": "cube"
+		]
 	}
 }

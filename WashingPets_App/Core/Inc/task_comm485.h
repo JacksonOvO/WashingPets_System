@@ -45,6 +45,7 @@ HAL_StatusTypeDef TaskComm485_ForceSetBoosterPumpRunning(uint8_t enabled);
 uint8_t TaskComm485_GetLastPercent(uint8_t station);
 uint8_t TaskComm485_GetLastProportionalValveAngle(void);
 uint8_t TaskComm485_GetLastBoosterPumpPercent(void);
+uint8_t TaskComm485_GetBoosterPumpFeedbackPressure(void);
 uint8_t TaskComm485_GetLastBoosterPumpRunning(void);
 void TaskComm485_SetRs485ActuatorMode(uint8_t enabled);
 uint8_t TaskComm485_IsRs485ActuatorMode(void);
