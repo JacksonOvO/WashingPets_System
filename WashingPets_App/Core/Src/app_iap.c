@@ -766,7 +766,7 @@ static void send_telemetry(uint8_t sequence)
   payload_out[29] = TaskComm485_GetLastPercent(RS485_STATION_BOTTOM_HEATER);
   payload_out[30] = TaskComm485_GetLastProportionalValveAngle();
   payload_out[31] = TaskComm485_GetLastPercent(RS485_STATION_TOP_EXHAUST_FAN);
-  payload_out[32] = TaskComm485_GetBoosterPumpFeedbackPressure();
+  payload_out[32] = 0U;
   /* 尾部追加流程时间统计：总剩余时间和当前小流程剩余时间，单位毫秒，uint32 小端。 */
   write_u32_le(&payload_out[33], AutoProcess_GetRemainingTimeMs());
   write_u32_le(&payload_out[37], AutoProcess_GetCurrentStageRemainingTimeMs());
@@ -1609,23 +1609,6 @@ static void handle_manual_rs485(uint8_t sequence,
     status = TaskComm485_RequestSetPercent((uint8_t)station,
                                            (uint8_t)value);
   }
-  else if (station == RS485_STATION_BOOSTER_PUMP)
-  {
-    if (value > 100U)
-    {
-      send_nack(APP_BUSINESS_CMD_MANUAL_RS485, sequence,
-                IAP_ERR_CONFIG, sequence, station);
-      return;
-    }
-
-    if (value != 0U)
-    {
-      TaskComm485_ReleaseNonzero(COMM485_INHIBIT_STARTUP |
-                                 COMM485_INHIBIT_SAFE_STOP |
-                                 COMM485_INHIBIT_MODE_CHANGE);
-    }
-    status = TaskComm485_RequestSetBoosterPumpPercent((uint8_t)value);
-  }
   else if (station == RS485_STATION_PROPORTIONAL_VALVE)
   {
     TaskComm485_ReleaseNonzero(COMM485_INHIBIT_STARTUP |
@@ -1709,13 +1692,29 @@ static void handle_booster_control(uint8_t sequence,
     return;
   }
 
-  if (enabled != 0U)
+  if ((enabled != 0U) &&
+      ((AutoDevice_IsEmergencyStopped() != 0U) ||
+       (AutoDevice_ReadInput(AUTO_INPUT_TANK_LOW) != 0U)))
   {
-    TaskComm485_ReleaseNonzero(COMM485_INHIBIT_STARTUP |
-                               COMM485_INHIBIT_SAFE_STOP |
-                               COMM485_INHIBIT_MODE_CHANGE);
+    send_nack(APP_BUSINESS_CMD_BOOSTER_CONTROL, sequence,
+              IAP_ERR_BUSY, sequence, enabled);
+    return;
   }
-  status = TaskComm485_RequestSetBoosterPumpRunning((uint8_t)enabled);
+
+  if (TaskOutput_IsAutoMode() != 0U)
+  {
+    status = AutoDevice_SetBoosterPumpRunning((uint8_t)enabled);
+  }
+  else
+  {
+    status = TaskOutput_Request(APP_OUTPUT_SOURCE_MANUAL,
+                                AUTO_OUTPUT_BOOSTER_PUMP_RUN,
+                                (uint8_t)enabled);
+    if (status == HAL_OK)
+    {
+      (void)TaskComm485_RequestSetBoosterPumpRunning((uint8_t)enabled);
+    }
+  }
   if (status != HAL_OK)
   {
     send_nack(APP_BUSINESS_CMD_BOOSTER_CONTROL, sequence,

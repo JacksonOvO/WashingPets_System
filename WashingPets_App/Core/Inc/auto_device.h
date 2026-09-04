@@ -89,7 +89,7 @@ typedef enum
   AUTO_OUTPUT_LIGHTING,                     /* OUT26-PC14：舱内照明，低电平有效，默认开启。 */
   AUTO_OUTPUT_FRONT_DOOR_LIGHT,             /* OUT27-PC15：正门灯带。 */
   AUTO_OUTPUT_LOGO_LIGHT,                   /* OUT28-PF0：LOGO发光板。 */
-  AUTO_OUTPUT_FRONT_DOOR_HEATER,            /* OUT29-PF1：正门加热。 */
+  AUTO_OUTPUT_BOOSTER_PUMP_RUN,             /* OUT29-PF1：增压泵GPIO启停。 */
   AUTO_OUTPUT_DOOR_CLOSE,                  /* OUT30-PF2：自动关门输出。 */
   AUTO_OUTPUT_DOOR_STOP,                   /* OUT31-PF3：关门停止输出。 */
   AUTO_OUTPUT_UPPER_LOCK,                   /* OUT32-PF4：上电磁锁。 */

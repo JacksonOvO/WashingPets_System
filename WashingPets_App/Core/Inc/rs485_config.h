@@ -2,7 +2,7 @@
 #define RS485_CONFIG_H
 
 /* RS485 Modbus slave addresses. Change field addresses here only. */
-#define RS485_STATION_BOOSTER_PUMP      1U  /* 增压泵变频器 */
+#define RS485_STATION_BOOSTER_PUMP      1U  /* 保留旧485增压泵站号；当前增压泵改由OUT29 GPIO控制。 */
 #define RS485_STATION_PROPORTIONAL_VALVE 2U /* 冷热水比例调节阀 */
 #define RS485_STATION_LEFT_FAN          10U /* 左风机 */
 #define RS485_STATION_RIGHT_FAN         11U /* 右风机 */

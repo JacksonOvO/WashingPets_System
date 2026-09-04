@@ -81,7 +81,7 @@ static const OutputHw output_hw_table[AUTO_OUTPUT_COUNT] = {
   [AUTO_OUTPUT_LIGHTING] = {GPIOC, GPIO_PIN_14, 1U}, /* 舱内照明，低电平有效，默认开启，急停保持开启。 */
   [AUTO_OUTPUT_FRONT_DOOR_LIGHT] = {GPIOC, GPIO_PIN_15, 0U}, /* 正门灯带，急停时强制关断。 */
   [AUTO_OUTPUT_LOGO_LIGHT] = {GPIOF, GPIO_PIN_0, 0U}, /* LOGO发光板，急停时强制关断。 */
-  [AUTO_OUTPUT_FRONT_DOOR_HEATER] = {GPIOF, GPIO_PIN_1, 0U}, /* 正门加热。 */
+  [AUTO_OUTPUT_BOOSTER_PUMP_RUN] = {GPIOF, GPIO_PIN_1, 0U}, /* 增压泵GPIO启停。 */
   [AUTO_OUTPUT_DOOR_CLOSE] = {GPIOF, GPIO_PIN_2, 0U}, /* 自动关门输出。 */
   [AUTO_OUTPUT_DOOR_STOP] = {GPIOF, GPIO_PIN_3, 0U}, /* 关门停止输出。 */
   [AUTO_OUTPUT_UPPER_LOCK] = {GPIOF, GPIO_PIN_4, 0U}, /* 上门电磁锁。 */
@@ -241,6 +241,7 @@ static uint8_t output_requires_closed_doors(AutoOutputPoint point)
     case AUTO_OUTPUT_UV_LAMP:
     case AUTO_OUTPUT_EXHAUST_UV_LAMP:
     case AUTO_OUTPUT_SCREW_PUMP:
+    case AUTO_OUTPUT_BOOSTER_PUMP_RUN:
     case AUTO_OUTPUT_SELF_CLEAN_TOP_VALVE:
     case AUTO_OUTPUT_SELF_CLEAN_FRONT_UPPER_VALVE:
     case AUTO_OUTPUT_SELF_CLEAN_FRONT_LOWER_VALVE:
@@ -297,6 +298,12 @@ static uint8_t output_interlock_allow(AutoOutputPoint point, uint8_t enabled)
   if (((point == AUTO_OUTPUT_TAP_WATER_VALVE) ||
        (point == AUTO_OUTPUT_STANDBY2_VALVE)) &&
       (tank_high_level_protect_active() != 0U))
+  {
+    return 0U;
+  }
+
+  if ((point == AUTO_OUTPUT_BOOSTER_PUMP_RUN) &&
+      (AutoDevice_ReadInput(AUTO_INPUT_TANK_LOW) != 0U))
   {
     return 0U;
   }

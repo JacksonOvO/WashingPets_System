@@ -46,7 +46,6 @@
 #define WATER_TANK_VALVE_UNKNOWN    0xFFU
 #define WATER_TANK_HOT_DRAIN_MS    20000U
 #define WATER_TANK_HIGH_STOP_DELAY_MS 15000U
-#define WATER_TANK_BOOSTER_PRESSURE_X10 50U
 #define WATER_TANK_TARGET_UNKNOWN  ((int16_t)-32768)
 
 typedef enum
@@ -452,13 +451,12 @@ static uint8_t heat_valve_angle_for_sensors(const AutoSensorData *sensors, const
 
 static void water_tank_booster_off(void)
 {
-  (void)TaskComm485_RequestSetBoosterPumpRunning(0U);
+  (void)AutoDevice_SetBoosterPumpRunning(0U);
 }
 
 static void water_tank_recirc_booster_on(void)
 {
-  (void)TaskComm485_ForceSetBoosterPumpPercent(WATER_TANK_BOOSTER_PRESSURE_X10);
-  (void)TaskComm485_ForceSetBoosterPumpRunning(1U);
+  (void)AutoDevice_SetBoosterPumpRunning(1U);
 }
 
 static void water_tank_outputs_off(void)

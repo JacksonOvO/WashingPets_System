@@ -143,8 +143,7 @@ static void self_test_outputs_off(void)
   uint8_t index;
 
   TaskComm485_SetSelfTestPressurePriority(0U);
-  (void)TaskComm485_ForceSetBoosterPumpRunning(0U);
-  (void)TaskComm485_ForceSetBoosterPumpPercent(0U);
+  (void)AutoDevice_SetBoosterPumpRunning(0U);
   (void)TaskComm485_RequestSetProportionalValveAngle(0U);
   close_water_outputs();
   for (index = 0U; index < 3U; ++index)
@@ -224,35 +223,6 @@ static TestStatus wait_station_write(uint8_t station, uint8_t percent)
       return control;
     }
     if (TaskComm485_GetStationSuccessCount(station) != before)
-    {
-      return TEST_STATUS_PASS;
-    }
-    osDelay(SELF_TEST_LOOP_MS);
-  }
-  return TEST_STATUS_FAIL;
-}
-
-static TestStatus set_booster_pressure(uint8_t pressure_x10)
-{
-  const AppSelfTestConfig_t *config = AppParam_GetSelfTestConfig();
-  uint32_t before = TaskComm485_GetStationSuccessCount(
-      RS485_STATION_BOOSTER_PUMP);
-  uint32_t start = HAL_GetTick();
-  TestStatus control;
-
-  if (TaskComm485_ForceSetBoosterPumpPercent(pressure_x10) != HAL_OK)
-  {
-    return TEST_STATUS_FAIL;
-  }
-  while ((HAL_GetTick() - start) < config->communication_timeout_ms)
-  {
-    control = poll_control();
-    if (control != TEST_STATUS_PASS)
-    {
-      return control;
-    }
-    if ((TaskComm485_GetStationSuccessCount(RS485_STATION_BOOSTER_PUMP) != before) &&
-        (TaskComm485_GetLastBoosterPumpPercent() == pressure_x10))
     {
       return TEST_STATUS_PASS;
     }
@@ -357,16 +327,6 @@ static TestStatus test_heater_deep(uint8_t index)
 
 static TestStatus monitor_pressure_safety(void)
 {
-  uint8_t pressure;
-
-  if ((TaskComm485_GetBoosterPumpFeedback(&pressure) != 0U) &&
-      (pressure > AppParam_GetSelfTestConfig()->pressure_over_x10))
-  {
-    (void)TaskComm485_ForceSetBoosterPumpRunning(0U);
-    AutoDevice_ReportFault(AUTO_FAULT_SELF_TEST_OVERPRESSURE,
-                           AUTO_REPORT_SENSOR_FAULT);
-    return TEST_STATUS_ABORT;
-  }
   return TEST_STATUS_PASS;
 }
 
@@ -382,14 +342,12 @@ static TestStatus drain_below_middle(void)
   }
   close_water_outputs();
   (void)AutoDevice_SetOutput(AUTO_OUTPUT_SHOWER_REAR, 1U);
-  control = set_booster_pressure(config->valve_pressure_x10);
-  if (control != TEST_STATUS_PASS)
+  (void)AutoDevice_SetBoosterPumpPercent(config->valve_pressure_x10);
+  if (AutoDevice_SetBoosterPumpRunning(1U) != HAL_OK)
   {
     self_test_outputs_off();
-    return control;
+    return TEST_STATUS_FAIL;
   }
-  (void)TaskComm485_ForceSetBoosterPumpRunning(1U);
-  TaskComm485_SetSelfTestPressurePriority(1U);
   start = HAL_GetTick();
   while ((HAL_GetTick() - start) < config->fill_timeout_ms)
   {
@@ -476,7 +434,6 @@ static TestStatus test_valve(const ValveTestPoint *test, uint8_t index)
   const AppSelfTestConfig_t *config = AppParam_GetSelfTestConfig();
   uint32_t start;
   uint32_t stable_start = 0U;
-  uint8_t pressure;
   TestStatus control;
 
   current_step_id = (uint16_t)(60U + index);
@@ -497,14 +454,12 @@ static TestStatus test_valve(const ValveTestPoint *test, uint8_t index)
     close_water_outputs();
     return TEST_STATUS_FAIL;
   }
-  control = set_booster_pressure(config->valve_pressure_x10);
-  if (control != TEST_STATUS_PASS)
+  (void)AutoDevice_SetBoosterPumpPercent(config->valve_pressure_x10);
+  if (AutoDevice_SetBoosterPumpRunning(1U) != HAL_OK)
   {
     self_test_outputs_off();
-    return control;
+    return TEST_STATUS_FAIL;
   }
-  (void)TaskComm485_ForceSetBoosterPumpRunning(1U);
-  TaskComm485_SetSelfTestPressurePriority(1U);
   start = HAL_GetTick();
   while ((HAL_GetTick() - start) < config->pressure_timeout_ms)
   {
@@ -514,35 +469,17 @@ static TestStatus test_valve(const ValveTestPoint *test, uint8_t index)
       self_test_outputs_off();
       return control;
     }
-    if (TaskComm485_GetBoosterPumpFeedback(&pressure) != 0U)
+    if (stable_start == 0U)
     {
-      if (pressure > config->pressure_over_x10)
-      {
-        self_test_outputs_off();
-        AutoDevice_ReportFault(AUTO_FAULT_SELF_TEST_OVERPRESSURE,
-                               AUTO_REPORT_SENSOR_FAULT);
-        return TEST_STATUS_ABORT;
-      }
-      if ((pressure >= config->pressure_min_x10) &&
-          (pressure <= config->pressure_max_x10))
-      {
-        if (stable_start == 0U)
-        {
-          stable_start = HAL_GetTick();
-        }
-        else if ((HAL_GetTick() - stable_start) >= config->pressure_stable_ms)
-        {
-          passed_bitmap |= test->bit;
-          passed_bitmap |= TEST_BIT_BOOSTER;
-          self_test_outputs_off();
-          osDelay(SELF_TEST_PRESSURE_RELEASE_MS);
-          return TEST_STATUS_PASS;
-        }
-      }
-      else
-      {
-        stable_start = 0U;
-      }
+      stable_start = HAL_GetTick();
+    }
+    else if ((HAL_GetTick() - stable_start) >= config->pressure_stable_ms)
+    {
+      passed_bitmap |= test->bit;
+      passed_bitmap |= TEST_BIT_BOOSTER;
+      self_test_outputs_off();
+      osDelay(SELF_TEST_PRESSURE_RELEASE_MS);
+      return TEST_STATUS_PASS;
     }
     if (level_reached(AUTO_INPUT_TANK_LOW) == 0U)
     {

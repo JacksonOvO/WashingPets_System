@@ -313,12 +313,19 @@ HAL_StatusTypeDef AutoDevice_SetBoosterPumpPercent(uint8_t percent)
 
 HAL_StatusTypeDef AutoDevice_SetBoosterPumpRunning(uint8_t enabled)
 {
+  HAL_StatusTypeDef status;
+
   if ((enabled != 0U) &&
       (AutoDevice_ReadInput(AUTO_INPUT_TANK_LOW) != 0U))
   {
     return HAL_BUSY;
   }
-  return TaskComm485_RequestSetBoosterPumpRunning(enabled);
+  status = AutoDevice_SetOutput(AUTO_OUTPUT_BOOSTER_PUMP_RUN, enabled);
+  if (status == HAL_OK)
+  {
+    (void)TaskComm485_RequestSetBoosterPumpRunning(enabled);
+  }
+  return status;
 }
 
 /*

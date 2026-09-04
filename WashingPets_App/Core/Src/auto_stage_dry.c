@@ -219,7 +219,7 @@ static AppFlowStepResult CheckAllow(AppFlowContext *ctx, const AppFlowStep *step
 {
   (void)ctx;
   (void)step;
-  (void)AutoDevice_SetOutput(AUTO_OUTPUT_FRONT_DOOR_HEATER, 0U);
+  (void)AutoDevice_SetBoosterPumpRunning(0U);
   if ((AutoDevice_ReadInput(AUTO_INPUT_UPPER_DOOR_CLOSED) == 0U) ||
       (AutoDevice_ReadInput(AUTO_INPUT_LOWER_DOOR_CLOSED) == 0U))
   {
