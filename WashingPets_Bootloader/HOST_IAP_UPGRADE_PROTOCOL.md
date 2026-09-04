@@ -36,7 +36,7 @@
 
 | 名称 | 值 |
 |---|---:|
-| `TARGET_ID` | `0x407A0C06` |
+| `TARGET_ID` | 由芯片 96 位 UID 计算 CRC32 得到 |
 | `HW_VERSION` | `0x0001` |
 | `APP_START` | `0x08004000` |
 | `APP_CAPACITY` | `770048` 字节，`0x000BC000` |
@@ -202,7 +202,7 @@ Payload：
 | 1 | 1 | `uint8` | 协议主版本，目前 `1` |
 | 2 | 1 | `uint8` | 协议次版本，目前 `1` |
 | 3 | 1 | `uint8` | APP 是否有效，`0/1` |
-| 4 | 4 | `uint32_le` | `target_id`，应为 `0x407A0C06` |
+| 4 | 4 | `uint32_le` | `target_id`，由设备运行时上报，升级开始时原样带回 |
 | 8 | 2 | `uint16_le` | 硬件版本，应为 `0x0001` |
 | 10 | 4 | `uint32_le` | Bootloader 版本 |
 | 14 | 4 | `uint32_le` | APP 版本 |
@@ -254,7 +254,7 @@ version = (major << 24) | (minor << 16) | (patch << 8)
    - 关闭并重新打开串口，或清空串口缓冲。
    - 重新从 `seq=0` 发送 `QUERY_INFO`。
 4. 如果返回 `run_mode=1`，说明当前在 Bootloader：
-   - 检查 `target_id == 0x407A0C06`。
+   - 检查 `target_id` 与升级前 `QUERY_INFO` 读到的设备 ID 一致。
    - 检查 APP bin 大小 `<= app_capacity`。
    - 计算 `image_crc32`。
    - 选择 `chunk_size = min(128, max_chunk)`。
@@ -346,7 +346,7 @@ Payload 固定 22 字节：
 
 | 偏移 | 长度 | 类型 | 说明 |
 |---:|---:|---|---|
-| 0 | 4 | `uint32_le` | `target_id = 0x407A0C06` |
+| 0 | 4 | `uint32_le` | `target_id = QUERY_INFO 返回的设备 ID` |
 | 4 | 2 | `uint16_le` | `hw_min = 0x0001` |
 | 6 | 2 | `uint16_le` | `hw_max = 0x0001` |
 | 8 | 4 | `uint32_le` | APP 版本 |
@@ -506,7 +506,7 @@ if (info.run_mode == 0) {
 }
 
 if (info.run_mode != 1) fail("not in bootloader");
-if (info.target_id != 0x407A0C06) fail("target mismatch");
+使用 QUERY_INFO 返回的 target_id 作为 UPGRADE_START.target_id。
 if (image_size > info.app_capacity) fail("image too large");
 
 chunk = min(128, info.max_chunk);
@@ -514,7 +514,7 @@ crc32 = calc_crc32(image);
 version = encode_version("1.0.0");
 
 payload_start = pack_le(
-    u32(0x407A0C06),
+    u32(info.target_id),
     u16(0x0001),
     u16(0x0001),
     u32(version),

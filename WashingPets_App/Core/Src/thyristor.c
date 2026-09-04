@@ -16,7 +16,7 @@
  */
 #define THYRISTOR_FUNC_READ            0x03U
 #define THYRISTOR_FUNC_WRITE           0x06U
-#define THYRISTOR_RESPONSE_TIMEOUT_MS  200U
+#define THYRISTOR_RESPONSE_TIMEOUT_MS  400U
 #define THYRISTOR_TX_COMPLETE_TIMEOUT_MS 20U
 
 /* 保存可控硅驱动使用的 UART，当前工程由 task_comm485.c 传入 USART1。 */

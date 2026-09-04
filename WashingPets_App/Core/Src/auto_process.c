@@ -398,6 +398,34 @@ uint8_t AutoProcess_IsStageTest(void)
   return stage_test_mode;
 }
 
+/*
+ * 查询是否处于单阶段测试。
+ *
+ * 覆盖两种情况：
+ * 1. 测试请求已提交但自动线程尚未启动（stage_test_request 置位）。
+ * 2. 测试已经启动正在运行（stage_test_mode 置位）。
+ * 故障后 stage_test_mode 保持置位直到复位，上位机据此持续显示单阶段测试模式。
+ */
+uint8_t AutoProcess_IsStageTestActive(void)
+{
+  uint16_t index;
+
+  if (stage_test_mode != 0U)
+  {
+    return 1U;
+  }
+
+  for (index = 0U; index < AUTO_PROCESS_STAGE_COUNT; ++index)
+  {
+    if (stage_test_request[index] != 0U)
+    {
+      return 1U;
+    }
+  }
+
+  return 0U;
+}
+
 uint16_t AutoProcess_GetCurrentStage(void)
 {
   return current_stage;

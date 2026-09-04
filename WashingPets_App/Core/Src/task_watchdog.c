@@ -81,6 +81,7 @@ void TaskWatchdog_EmergencyOutputsOff(void)
   GPIOB->BSRR = GPIO_PIN_3 | GPIO_PIN_4 | GPIO_PIN_5 | GPIO_PIN_6 |
                 GPIO_PIN_7 | GPIO_PIN_8 | GPIO_PIN_9 | GPIO_PIN_12 |
                 GPIO_PIN_13 | GPIO_PIN_14 | GPIO_PIN_15;
+  /* PC14舱内照明低电平有效，即使紧急关断也保持开启。 */
   GPIOC->BSRR = GPIO_PIN_0 | GPIO_PIN_1 | GPIO_PIN_13 | GPIO_PIN_15 |
                 ((uint32_t)GPIO_PIN_14 << 16U);
   GPIOD->BSRR = GPIO_PIN_8 | GPIO_PIN_9 | GPIO_PIN_10 |

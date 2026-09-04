@@ -224,7 +224,8 @@ static AppFlowStepResult CheckAllow(AppFlowContext *ctx, const AppFlowStep *step
       (AutoDevice_ReadInput(AUTO_INPUT_LOWER_DOOR_CLOSED) == 0U))
   {
     dry_safe_stop();
-    AutoDevice_SetFault(AUTO_FAULT_OUTPUT_COMMAND_FAILED);
+    /* 门未关闭到位属于安全联锁失败，使用专用故障码，便于上位机定位。 */
+    AutoDevice_SetFault(AUTO_FAULT_DOOR_NOT_CLOSED);
     return APP_FLOW_STEP_FAIL;
   }
   return APP_FLOW_STEP_DONE;

@@ -6,7 +6,10 @@
 #include "cmsis_os.h"
 #include "task_clean.h"
 #include "task_output.h"
+#include "task_self_test.h"
 #include "task_watchdog.h"
+
+#include "stm32f4xx_hal.h"
 
 /*
  * 自动流程线程配置。
@@ -21,6 +24,10 @@
 /* 自动流程线程句柄，保存 osThreadNew() 返回值。 */
 static osThreadId_t auto_task_handle;
 static uint8_t emergency_stop_latched;
+
+/* 上电宽限：回路从未接通过时，10 秒内不报急停，留出接线时间。 */
+#define AUTO_ESTOP_BOOT_GRACE_MS     10000U
+static uint8_t emergency_stop_ever_ok;
 
 /*
  * 自动流程线程属性。
@@ -40,6 +47,29 @@ static void AutoTask_ProcessEmergencyStop(void)
   if (AutoDevice_IsEmergencyStopped() == 0U)
   {
     emergency_stop_latched = 0U;
+    emergency_stop_ever_ok = 1U;
+    /*
+     * 急停信号恢复（常闭回路接通）后自动清除急停故障码，
+     * 并通知协议层补发故障解除事件，上位机不再残留“急停触发”报警。
+     * 急停期间的安全动作（停机、切手动）不会因此自动恢复。
+     */
+    if (AutoDevice_GetFault() == AUTO_FAULT_EMERGENCY_STOP)
+    {
+      AutoDevice_ClearFault();
+      AutoDevice_Report(AUTO_REPORT_FAULT_CLEARED);
+    }
+    return;
+  }
+
+  /*
+   * 上电宽限期：回路从未接通过且仍在宽限窗口内时不报警，
+   * 避免板卡先上电、急停后接线时一上电就误报急停。
+   * 宽限期内输出全关且无自动流程，安全不受影响；
+   * 回路一旦接通过，立即恢复“断开即报警”。
+   */
+  if ((emergency_stop_ever_ok == 0U) &&
+      (HAL_GetTick() < AUTO_ESTOP_BOOT_GRACE_MS))
+  {
     return;
   }
 
@@ -48,7 +78,10 @@ static void AutoTask_ProcessEmergencyStop(void)
 
   if (emergency_stop_latched == 0U)
   {
+    AutoDevice_ReportFault(AUTO_FAULT_EMERGENCY_STOP,
+                           AUTO_REPORT_SENSOR_FAULT);
     TaskClean_Stop();
+    TaskSelfTest_Stop();
     AutoDevice_AllDangerousOutputsOff();
     TaskOutput_AllOff();
     TaskOutput_SetAutoMode(0U);

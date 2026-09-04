@@ -9,6 +9,7 @@
 #include "task_clean.h"
 #include "task_comm485.h"
 #include "task_output.h"
+#include "task_self_test.h"
 
 #include <stddef.h>
 #include <string.h>
@@ -53,6 +54,7 @@
 #define APP_BUSINESS_RSP_FAULT_EVENT        0xA4U
 #define APP_BUSINESS_RSP_TELEMETRY          0xA5U
 #define APP_BUSINESS_RSP_IO_STATUS          0xA6U
+#define APP_BUSINESS_RSP_SELF_TEST_RESULT   0xA7U
 
 typedef enum
 {
@@ -83,7 +85,6 @@ typedef struct
   uint8_t event_type;
   uint8_t severity;
   uint16_t primary_fault_code;
-  uint32_t fault_bitmap;
 } BusinessFaultEvent;
 
 typedef struct
@@ -106,7 +107,25 @@ static uint16_t payload_length;
 static uint16_t receive_index;
 static osMutexId_t tx_mutex;
 static uint8_t business_tx_sequence;
-static uint32_t fault_bitmap;
+static uint32_t last_reported_fault_bitmap;
+static uint32_t health_bitmap_snapshot;
+static uint8_t fault_event_pending;      /* 0无 1仅位图变化 2有新故障（待聚合发送） */
+static uint32_t fault_pending_start_tick;
+static uint32_t fault_last_change_tick;
+static uint16_t last_reported_primary;
+
+/* A4 逐从站待发故障码队列：协议位图里 bit14 被臭氧/增压泵/比例阀/风机/
+ * 加热棒等多个执行器从站共享，无法通过位图区分具体是哪个从站失联。
+ * 每个健康源失联时把其具体故障码入队，聚合窗口关闭后逐码各发一条 A4，
+ * 保证上位机历史里每个具体从站故障码单独显示。 */
+#define APP_FAULT_PENDING_MAX 20U
+static uint16_t pending_fault_codes[APP_FAULT_PENDING_MAX];
+static uint8_t pending_fault_count;
+
+/* A4 故障事件聚合窗口：巡检多站同时故障时合并成一帧发送，
+ * 窗口内位图持续变化则顺延，最长等待 APP_FAULT_EVENT_AGGREGATE_MAX_MS。 */
+#define APP_FAULT_EVENT_AGGREGATE_MS     500U
+#define APP_FAULT_EVENT_AGGREGATE_MAX_MS 1500U
 static uint32_t fault_event_id;
 static uint8_t last_status_payload[APP_STATUS_PAYLOAD_SIZE];
 static uint8_t last_io_payload[APP_IO_PAYLOAD_SIZE];
@@ -120,8 +139,11 @@ static uint8_t interaction_stage_id;
 static uint16_t interaction_step_id;
 static uint32_t interaction_tick;
 static uint32_t state_check_tick;
+static uint8_t stage_test_active_snapshot;
 static uint32_t status_heartbeat_tick;
 static uint32_t io_heartbeat_tick;
+static uint32_t self_test_result_tick;
+static uint8_t self_test_result_sequence;
 #if (APP_IAP_TELEMETRY_ENABLE != 0U)
 static uint32_t telemetry_tick;
 static uint8_t telemetry_last_sequence;
@@ -195,6 +217,21 @@ static uint32_t crc32_data(const uint8_t *data, uint32_t length)
   return crc32_update(0xFFFFFFFFU, data, length) ^ 0xFFFFFFFFU;
 }
 
+static uint32_t device_id(void)
+{
+  uint32_t uid[3];
+
+  uid[0] = *(volatile uint32_t *)UID_BASE;
+  uid[1] = *(volatile uint32_t *)(UID_BASE + 4U);
+  uid[2] = *(volatile uint32_t *)(UID_BASE + 8U);
+  return crc32_data((const uint8_t *)uid, sizeof(uid));
+}
+
+uint32_t AppIap_GetDeviceId(void)
+{
+  return device_id();
+}
+
 static const AppFirmwareMetadata *get_app_metadata(void)
 {
   return (const AppFirmwareMetadata *)APP_IAP_METADATA_ADDRESS;
@@ -203,7 +240,7 @@ static const AppFirmwareMetadata *get_app_metadata(void)
 static uint8_t app_metadata_is_valid(const AppFirmwareMetadata *metadata)
 {
   if ((metadata->magic != APP_IAP_METADATA_MAGIC) ||
-      (metadata->target != APP_IAP_TARGET_ID) ||
+      (metadata->target != device_id()) ||
       (metadata->status != APP_IAP_METADATA_VALID) ||
       (metadata->size < 8U) ||
       (metadata->size > APP_IAP_APP_MAX_SIZE))
@@ -311,7 +348,7 @@ static void send_device_info(uint8_t sequence)
   response[1] = IAP_PROTOCOL_MAJOR;
   response[2] = IAP_PROTOCOL_MINOR;
   response[3] = 1U;
-  write_u32_le(&response[4], APP_IAP_TARGET_ID);
+  write_u32_le(&response[4], device_id());
   write_u16_le(&response[8], APP_IAP_HARDWARE_VERSION);
   write_u32_le(&response[10], APP_IAP_BOOT_VERSION_UNKNOWN);
   write_u32_le(&response[14], APP_IAP_VERSION);
@@ -338,7 +375,7 @@ static void send_app_ready(uint8_t sequence)
   response[1] = IAP_PROTOCOL_MINOR;
   response[2] = 0U;
   response[3] = 0U;
-  write_u32_le(&response[4], APP_IAP_TARGET_ID);
+  write_u32_le(&response[4], device_id());
   write_u16_le(&response[8], APP_IAP_HARDWARE_VERSION);
   write_u32_le(&response[10], APP_IAP_VERSION);
   write_u32_le(&response[14], app_size);
@@ -406,11 +443,31 @@ static uint8_t packet_crc_is_valid(void)
 
 static uint8_t get_work_mode(void)
 {
+  /* 单阶段测试期间（含请求已提交未启动）上报单阶段测试模式。 */
+  if (AutoProcess_IsStageTestActive() != 0U)
+  {
+    return 3U;
+  }
+
+  /*
+   * 活动故障时模式保持实际模式：自动模式发生故障会由周期检查安全停机
+   * 并切回手动（见 TaskOutput_SetAutoMode(0)），故这里只依赖仲裁标志，
+   * 故障体现在 run_state=FAULTED 上，不再额外把 work_mode 置成 4(FAULT)。
+   */
   return (TaskOutput_IsAutoMode() != 0U) ? 2U : 1U;
 }
 
 static uint8_t get_run_state(void)
 {
+  /*
+   * 存在活动故障时（包括空闲态下探测到的485从站健康故障），
+   * 运行状态统一上报故障，不再要求必须先有流程在跑才能进入FAULTED。
+   */
+  if (AutoDevice_GetFault() != AUTO_FAULT_NONE)
+  {
+    return 7U;
+  }
+  if (TaskSelfTest_IsPaused() != 0U) return 4U;
   if ((AutoProcess_IsFailed() != 0U) ||
       (TaskClean_IsFailed() != 0U))
   {
@@ -421,7 +478,8 @@ static uint8_t get_run_state(void)
     return 4U;
   }
   if ((AutoProcess_IsRunning() != 0U) ||
-      (TaskClean_IsRunning() != 0U))
+      (TaskClean_IsRunning() != 0U) ||
+      (TaskSelfTest_IsRunning() != 0U))
   {
     return 2U;
   }
@@ -434,6 +492,10 @@ static uint8_t get_run_state(void)
 
 static uint8_t get_process_type(void)
 {
+  if (TaskSelfTest_IsRunning() != 0U)
+  {
+    return 5U;
+  }
   if ((TaskClean_IsRunning() != 0U) ||
       (TaskClean_IsFailed() != 0U))
   {
@@ -452,6 +514,8 @@ static uint8_t get_process_type(void)
 
 static uint8_t get_step_state(void)
 {
+  if (TaskSelfTest_IsPaused() != 0U) return 3U;
+  if (TaskSelfTest_IsRunning() != 0U) return 1U;
   if ((AutoProcess_IsFailed() != 0U) ||
       (TaskClean_IsFailed() != 0U))
   {
@@ -462,7 +526,8 @@ static uint8_t get_step_state(void)
     return 3U;
   }
   if ((AutoProcess_IsRunning() != 0U) ||
-      (TaskClean_IsRunning() != 0U))
+      (TaskClean_IsRunning() != 0U) ||
+      (TaskSelfTest_IsRunning() != 0U))
   {
     return 1U;
   }
@@ -489,6 +554,10 @@ static uint16_t get_progress_x10(void)
   uint16_t stage = AutoProcess_GetCurrentStage();
   uint16_t clean_step;
 
+  if (TaskSelfTest_IsRunning() != 0U)
+  {
+    return TaskSelfTest_GetProgressX10();
+  }
   if ((TaskClean_IsRunning() != 0U) ||
       (TaskClean_IsFailed() != 0U))
   {
@@ -540,10 +609,15 @@ static void build_device_status_payload(uint8_t payload_out[APP_STATUS_PAYLOAD_S
   status.work_mode = get_work_mode();
   status.run_state = get_run_state();
   status.process_type = get_process_type();
-  if ((TaskClean_IsRunning() != 0U) ||
+  if (TaskSelfTest_IsRunning() != 0U)
+  {
+    status.stage_id = 0x81U;
+    status.step_id = TaskSelfTest_GetCurrentStepId();
+  }
+  else if ((TaskClean_IsRunning() != 0U) ||
       (TaskClean_IsFailed() != 0U))
   {
-    status.stage_id = (uint8_t)AUTO_PROCESS_STAGE_COUNT;
+    status.stage_id = 9U;
     status.step_id = TaskClean_GetCurrentStepId();
   }
   else
@@ -624,6 +698,12 @@ static void send_param_block_response(uint8_t sequence, uint8_t group, uint8_t i
     memcpy(&payload_out[10], recipe, sizeof(AppRecipe_t));
     data_length = (uint16_t)sizeof(AppRecipe_t);
   }
+  else if ((group == 2U) && (index == 0U))
+  {
+    write_u16_le(&payload_out[8], (uint16_t)sizeof(AppSelfTestConfig_t));
+    memcpy(&payload_out[10], &param->self_test, sizeof(AppSelfTestConfig_t));
+    data_length = (uint16_t)sizeof(AppSelfTestConfig_t);
+  }
   else
   {
     return;
@@ -700,6 +780,11 @@ static void handle_host_ack(uint8_t sequence,
                             const uint8_t *data,
                             uint16_t length)
 {
+  if ((length >= 6U) && (data[0] == APP_BUSINESS_RSP_SELF_TEST_RESULT) &&
+      (data[1] == IAP_STATUS_OK) && (sequence == self_test_result_sequence))
+  {
+    TaskSelfTest_AcknowledgeResult(read_u32_le(&data[2]));
+  }
 #if (APP_IAP_TELEMETRY_ENABLE != 0U)
   if ((length >= 6U) &&
       (data[0] == APP_BUSINESS_RSP_TELEMETRY) &&
@@ -775,42 +860,184 @@ static void send_io_status(uint8_t sequence)
   send_io_status_payload(sequence, payload_out);
 }
 
-static void send_fault_event(uint8_t sequence, AutoReport report)
+static uint32_t build_current_fault_bitmap(uint32_t extra_bits)
 {
-  uint8_t payload_out[12];
-  uint8_t severity = 2U;
-  uint16_t primary_fault = (uint16_t)AutoDevice_GetFault();
-  uint32_t event_bitmap = fault_bitmap;
+  uint32_t bitmap = TaskComm485_GetHealthBitmap() | extra_bits;
+
+  if (AutoDevice_IsEmergencyStopped() != 0U)
+  {
+    bitmap |= (1UL << 0);
+  }
+  return bitmap;
+}
+
+/*
+ * 发送一条 A4 故障事件帧。primary_fault 为本次要展示的具体故障码；
+ * event_type 按位图/主码相对上次上报的变化方向确定（1=发生 2=更新 3=解除）。
+ * 逐从站上报时每个待发故障码各调一次，让具体故障码逐条出现在上位机历史里。
+ */
+static void send_fault_event_frame(uint8_t sequence, uint16_t primary_fault,
+                                   uint8_t severity, uint32_t extra_bits)
+{
+  uint8_t payload_out[8];
+  uint8_t event_type;
+  uint32_t event_bitmap = build_current_fault_bitmap(extra_bits);
 
   memset(payload_out, 0, sizeof(payload_out));
   fault_event_id++;
-  write_u32_le(&payload_out[0], fault_event_id);
-  payload_out[4] = 1U;
 
-  if (report == AUTO_REPORT_SENSOR_FAULT)
+  if ((event_bitmap == 0U) && (primary_fault == 0U))
   {
-    severity = 3U;
-    if (primary_fault == 0U)
-    {
-      primary_fault = 1U;
-    }
-    event_bitmap |= (1UL << 5);
+    event_type = 3U;
+  }
+  else if ((last_reported_fault_bitmap == 0U) ||
+           ((event_bitmap & ~last_reported_fault_bitmap) != 0U) ||
+           ((primary_fault != 0U) && (primary_fault != last_reported_primary)))
+  {
+    event_type = 1U;
+  }
+  else
+  {
+    event_type = 2U;
+  }
+
+  write_u32_le(&payload_out[0], fault_event_id);
+  payload_out[4] = event_type;
+  payload_out[5] = severity;
+  write_u16_le(&payload_out[6], primary_fault);
+  last_reported_fault_bitmap = event_bitmap;
+  last_reported_primary = primary_fault;
+  health_bitmap_snapshot = TaskComm485_GetHealthBitmap();
+  send_frame(APP_BUSINESS_RSP_FAULT_EVENT, sequence, payload_out, sizeof(payload_out));
+}
+
+/*
+ * 故障位图现在是实时健康位图：位由 task_comm485 巡检置位/清除，
+ * event_type 按位图变化方向遵循协议 13.2 语义（1=发生 2=更新 3=解除）。
+ */
+static void send_fault_event(uint8_t sequence, AutoReport report)
+{
+  uint16_t primary_fault = (uint16_t)AutoDevice_GetFault();
+  uint8_t severity;
+  uint32_t extra_bits = 0U;
+
+  if (report == AUTO_REPORT_TIMEOUT_FAULT)
+  {
+    extra_bits |= (1UL << 16);
+  }
+
+  if (primary_fault == (uint16_t)AUTO_FAULT_EMERGENCY_STOP)
+  {
+    severity = 4U;
+    extra_bits |= (1UL << 0);
   }
   else if (report == AUTO_REPORT_TIMEOUT_FAULT)
   {
     severity = 2U;
     if (primary_fault == 0U)
     {
-      primary_fault = 2U;
+      /* 优先取健康巡检给出的具体从站故障码，避免兜底值撞号。 */
+      primary_fault = TaskComm485_GetFirstHealthFault();
+      if (primary_fault == 0U)
+      {
+        primary_fault = 2U;
+      }
     }
-    event_bitmap |= (1UL << 16);
+  }
+  else
+  {
+    severity = 3U;
+    if (primary_fault == 0U)
+    {
+      primary_fault = TaskComm485_GetFirstHealthFault();
+      if (primary_fault == 0U)
+      {
+        primary_fault = 1U;
+      }
+    }
   }
 
+  send_fault_event_frame(sequence, primary_fault, severity, extra_bits);
+}
+
+/*
+ * 健康位图变化（传感器/从站恢复、故障复位）但没有新故障发生时，
+ * 主动补发一条故障更新/解除事件，让上位机实时刷新。
+ */
+static void send_fault_update_event(uint8_t sequence)
+{
+  uint8_t payload_out[8];
+  uint16_t primary_fault = (uint16_t)AutoDevice_GetFault();
+  uint32_t event_bitmap = build_current_fault_bitmap(0U);
+  uint8_t event_type;
+  uint8_t severity;
+
+  if ((event_bitmap == 0U) && (primary_fault == 0U))
+  {
+    event_type = 3U;
+    severity = 1U;
+  }
+  else
+  {
+    event_type = 2U;
+    severity = 2U;
+    if (primary_fault == 0U)
+    {
+      primary_fault = TaskComm485_GetFirstHealthFault();
+    }
+  }
+
+  memset(payload_out, 0, sizeof(payload_out));
+  fault_event_id++;
+  write_u32_le(&payload_out[0], fault_event_id);
+  payload_out[4] = event_type;
   payload_out[5] = severity;
   write_u16_le(&payload_out[6], primary_fault);
-  write_u32_le(&payload_out[8], event_bitmap);
-  fault_bitmap = event_bitmap;
+  last_reported_fault_bitmap = event_bitmap;
+  last_reported_primary = primary_fault;
+  health_bitmap_snapshot = TaskComm485_GetHealthBitmap();
   send_frame(APP_BUSINESS_RSP_FAULT_EVENT, sequence, payload_out, sizeof(payload_out));
+}
+
+/* 将新故障码加入 A4 逐从站待发队列，去重并限制容量。
+ * 入队来自 task_comm485/task_auto，消费来自上位机任务，跨任务用临界区保护。 */
+static void pending_fault_push(uint16_t code)
+{
+  uint8_t index;
+
+  if (code == 0U)
+  {
+    return;
+  }
+  taskENTER_CRITICAL();
+  for (index = 0U; index < pending_fault_count; ++index)
+  {
+    if (pending_fault_codes[index] == code)
+    {
+      taskEXIT_CRITICAL();
+      return;
+    }
+  }
+  if (pending_fault_count < APP_FAULT_PENDING_MAX)
+  {
+    pending_fault_codes[pending_fault_count] = code;
+    pending_fault_count++;
+  }
+  taskEXIT_CRITICAL();
+}
+
+static void send_self_test_result(uint8_t sequence, const SelfTestResult *result)
+{
+  uint8_t payload_out[14];
+
+  write_u32_le(&payload_out[0], result->result_id);
+  payload_out[4] = result->mode;
+  payload_out[5] = result->state;
+  write_u32_le(&payload_out[6], result->tested_bitmap);
+  write_u32_le(&payload_out[10], result->passed_bitmap);
+  send_frame(APP_BUSINESS_RSP_SELF_TEST_RESULT, sequence, payload_out, sizeof(payload_out));
+  self_test_result_sequence = sequence;
+  self_test_result_tick = HAL_GetTick();
 }
 
 static void send_interaction_request(uint8_t sequence)
@@ -869,6 +1096,20 @@ static void handle_set_work_mode(uint8_t sequence, const uint8_t *data, uint16_t
       return;
     }
 
+    /* 存在活动故障或任一 485 从站失联时禁止切自动，detail 带首个故障码。 */
+    if (AutoDevice_GetFault() != AUTO_FAULT_NONE)
+    {
+      send_nack(APP_BUSINESS_CMD_SET_WORK_MODE, sequence, IAP_ERR_BAD_STATE, sequence,
+                (uint32_t)AutoDevice_GetFault());
+      return;
+    }
+    if (TaskComm485_IsAllHealthy() == 0U)
+    {
+      send_nack(APP_BUSINESS_CMD_SET_WORK_MODE, sequence, IAP_ERR_BAD_STATE, sequence,
+                (uint32_t)TaskComm485_GetFirstHealthFault());
+      return;
+    }
+
     /* Re-sending auto mode while already in auto should be a no-op. */
     if (TaskOutput_IsAutoMode() != 0U)
     {
@@ -894,6 +1135,7 @@ static void handle_set_work_mode(uint8_t sequence, const uint8_t *data, uint16_t
     TaskComm485_InhibitNonzero(COMM485_INHIBIT_MODE_CHANGE);
     TaskComm485_RequestSafeStop();
     TaskClean_Stop();
+    TaskSelfTest_Stop();
     AutoDevice_SetPaused(0U);
     AutoDevice_SetStopRequested(0U);
     AutoProcess_RequestReset();
@@ -937,7 +1179,8 @@ static void handle_process_control(uint8_t sequence, const uint8_t *data, uint16
         break;
       }
       if ((AutoProcess_IsRunning() != 0U) ||
-          (TaskClean_IsRunning() != 0U))
+          (TaskClean_IsRunning() != 0U) ||
+          (TaskSelfTest_IsRunning() != 0U))
       {
         send_nack(APP_BUSINESS_CMD_PROCESS_CONTROL, sequence,
                   IAP_ERR_BUSY, sequence, 0U);
@@ -957,41 +1200,36 @@ static void handle_process_control(uint8_t sequence, const uint8_t *data, uint16
 
     case 2U:
       if ((TaskOutput_IsAutoMode() == 0U) ||
-          ((AutoProcess_IsRunning() == 0U) &&
-           (TaskClean_IsRunning() == 0U)))
+          ((AutoProcess_IsRunning() == 0U) && (TaskClean_IsRunning() == 0U) &&
+           (TaskSelfTest_IsRunning() == 0U)))
       {
-        send_nack(APP_BUSINESS_CMD_PROCESS_CONTROL, sequence,
-                  IAP_ERR_BAD_STATE, sequence, 0U);
+        send_nack(APP_BUSINESS_CMD_PROCESS_CONTROL, sequence, IAP_ERR_BAD_STATE, sequence, 0U);
         break;
       }
-      TaskComm485_InhibitNonzero(COMM485_INHIBIT_PAUSE);
-      AutoDevice_SetPaused(1U);
-      AutoDevice_AllDangerousOutputsOff();
-      send_ack(APP_BUSINESS_CMD_PROCESS_CONTROL, sequence, (uint32_t)2U);
+      if (TaskSelfTest_IsRunning() != 0U)
+      {
+        TaskSelfTest_Pause();
+      }
+      else
+      {
+        TaskComm485_InhibitNonzero(COMM485_INHIBIT_PAUSE);
+        AutoDevice_SetPaused(1U);
+        AutoDevice_AllDangerousOutputsOff();
+      }
+      send_ack(APP_BUSINESS_CMD_PROCESS_CONTROL, sequence, 2U);
       break;
 
     case 3U:
       if ((TaskOutput_IsAutoMode() == 0U) ||
-          (AutoDevice_IsPaused() == 0U) ||
-          ((AutoProcess_IsRunning() == 0U) &&
-           (TaskClean_IsRunning() == 0U)))
+          ((AutoDevice_IsPaused() == 0U) && (TaskSelfTest_IsPaused() == 0U)))
       {
-        send_nack(APP_BUSINESS_CMD_PROCESS_CONTROL, sequence,
-                  IAP_ERR_BAD_STATE, sequence, 0U);
+        send_nack(APP_BUSINESS_CMD_PROCESS_CONTROL, sequence, IAP_ERR_BAD_STATE, sequence, 0U);
         break;
       }
-      /* 继续只解除暂停，保留当前流程、当前步骤和等待计时状态。
-       * 不能重启当前阶段，否则暂停在 120 步后继续会重新回到 10 步。
-       */
-      if (AutoProcess_IsRunning() != 0U)
-      {
-        AutoProcess_RequestResume();
-      }
-      else
-      {
-        TaskClean_RequestResume();
-      }
-      send_ack(APP_BUSINESS_CMD_PROCESS_CONTROL, sequence, (uint32_t)3U);
+      if (TaskSelfTest_IsRunning() != 0U) TaskSelfTest_Resume();
+      else if (AutoProcess_IsRunning() != 0U) AutoProcess_RequestResume();
+      else TaskClean_RequestResume();
+      send_ack(APP_BUSINESS_CMD_PROCESS_CONTROL, sequence, 3U);
       break;
 
     case 4U:
@@ -1002,6 +1240,7 @@ static void handle_process_control(uint8_t sequence, const uint8_t *data, uint16
         break;
       }
       TaskClean_Stop();
+      TaskSelfTest_Stop();
       AutoDevice_AllDangerousOutputsOff();
       if (TaskOutput_ClearSourceSync(APP_OUTPUT_SOURCE_AUTO,
                                      APP_OUTPUT_SYNC_TIMEOUT_MS) != HAL_OK)
@@ -1023,14 +1262,19 @@ static void handle_process_control(uint8_t sequence, const uint8_t *data, uint16
                   IAP_ERR_CONFIG, sequence, stage_id);
         break;
       }
-      if (TaskOutput_IsAutoMode() == 0U)
+      /*
+       * 单阶段测试只允许在手动模式触发，设备不会代为切换模式。
+       * 上位机必须先发送 SET_WORK_MODE(1) 进入手动模式。
+       */
+      if (TaskOutput_IsAutoMode() != 0U)
       {
         send_nack(APP_BUSINESS_CMD_PROCESS_CONTROL, sequence,
                   IAP_ERR_BAD_STATE, sequence, stage_id);
         break;
       }
       if ((AutoProcess_IsRunning() != 0U) ||
-          (TaskClean_IsRunning() != 0U))
+          (TaskClean_IsRunning() != 0U) ||
+          (TaskSelfTest_IsRunning() != 0U))
       {
         send_nack(APP_BUSINESS_CMD_PROCESS_CONTROL, sequence,
                   IAP_ERR_BUSY, sequence, stage_id);
@@ -1040,6 +1284,20 @@ static void handle_process_control(uint8_t sequence, const uint8_t *data, uint16
       if (TaskOutput_ClearSourceSync(APP_OUTPUT_SOURCE_AUTO,
                                      APP_OUTPUT_SYNC_TIMEOUT_MS) != HAL_OK)
       {
+        send_nack(APP_BUSINESS_CMD_PROCESS_CONTROL, sequence,
+                  IAP_ERR_BUSY, sequence, stage_id);
+        break;
+      }
+      /*
+       * 单阶段测试需要自动流程驱动输出，这里内部临时切到自动输出仲裁，
+       * 并同步等待生效，避免模式切换清理动作清掉随后提交的自动请求。
+       * 对外上报的工作模式仍是单阶段测试模式（mode=3），
+       * 测试结束后由状态检查自动切回手动模式。
+       */
+      TaskOutput_SetAutoMode(1U);
+      if (TaskOutput_Sync(APP_OUTPUT_SYNC_TIMEOUT_MS) != HAL_OK)
+      {
+        TaskOutput_SetAutoMode(0U);
         send_nack(APP_BUSINESS_CMD_PROCESS_CONTROL, sequence,
                   IAP_ERR_BUSY, sequence, stage_id);
         break;
@@ -1060,7 +1318,8 @@ static void handle_process_control(uint8_t sequence, const uint8_t *data, uint16
         break;
       }
       if ((AutoProcess_IsRunning() != 0U) ||
-          (TaskClean_IsRunning() != 0U))
+          (TaskClean_IsRunning() != 0U) ||
+          (TaskSelfTest_IsRunning() != 0U))
       {
         send_nack(APP_BUSINESS_CMD_PROCESS_CONTROL, sequence,
                   IAP_ERR_BUSY, sequence, 0U);
@@ -1082,20 +1341,26 @@ static void handle_process_control(uint8_t sequence, const uint8_t *data, uint16
       break;
 
     case 7U:
-      fault_bitmap = 0U;
       AutoDevice_ClearFault();
+      /* 重置健康巡检：仍然断连的从站会在几秒内重新报警。 */
+      TaskComm485_ResetHealthFaults();
       TaskClean_Stop();
       TaskClean_ClearFault();
+      TaskSelfTest_Stop();
       AutoDevice_SetPaused(0U);
       AutoDevice_SetStopRequested(0U);
       AutoProcess_RequestReset();
+      /* 复位完成后主动补发更新/解除事件，让上位机实时清掉提示。 */
+      fault_event_pending = 0U;
+      send_fault_update_event(next_business_sequence());
       send_ack(APP_BUSINESS_CMD_PROCESS_CONTROL, sequence, (uint32_t)7U);
       break;
 
     case 8U:
       if ((TaskOutput_IsAutoMode() == 0U) ||
           (AutoProcess_IsRunning() == 0U) ||
-          (TaskClean_IsRunning() != 0U))
+          (TaskClean_IsRunning() != 0U) ||
+          (TaskSelfTest_IsRunning() != 0U))
       {
         send_nack(APP_BUSINESS_CMD_PROCESS_CONTROL, sequence,
                   IAP_ERR_BAD_STATE, sequence, 0U);
@@ -1114,6 +1379,20 @@ static void handle_process_control(uint8_t sequence, const uint8_t *data, uint16
       }
       AutoProcess_RequestTerminateServiceToExit();
       send_ack(APP_BUSINESS_CMD_PROCESS_CONTROL, sequence, (uint32_t)8U);
+      break;
+
+    case 9U:
+      if ((stage_id > 1U) ||
+          (TaskSelfTest_CanStart((SelfTestMode)stage_id) == 0U))
+      {
+        send_nack(APP_BUSINESS_CMD_PROCESS_CONTROL, sequence, IAP_ERR_BAD_STATE, sequence, stage_id);
+        break;
+      }
+      AutoDevice_SetPaused(0U);
+      AutoDevice_SetStopRequested(0U);
+      AutoProcess_RequestReset();
+      TaskSelfTest_Request((SelfTestMode)stage_id);
+      send_ack(APP_BUSINESS_CMD_PROCESS_CONTROL, sequence, 9U);
       break;
 
     default:
@@ -1246,13 +1525,6 @@ static void handle_manual_output(uint8_t sequence, const uint8_t *data, uint16_t
     return;
   }
 
-  if (AutoDevice_IsEmergencyStopped() != 0U)
-  {
-    send_nack(APP_BUSINESS_CMD_MANUAL_OUTPUT, sequence,
-              IAP_ERR_BAD_STATE, sequence, 0U);
-    return;
-  }
-
   output_id = read_u16_le(&data[0]);
   action = data[2];
   if ((output_id < (uint16_t)AUTO_OUTPUT_EXHAUST_FAN) ||
@@ -1265,6 +1537,13 @@ static void handle_manual_output(uint8_t sequence, const uint8_t *data, uint16_t
   if (action > 1U)
   {
     send_nack(APP_BUSINESS_CMD_MANUAL_OUTPUT, sequence, IAP_ERR_CONFIG, sequence, 0U);
+    return;
+  }
+
+  if (AutoDevice_IsEmergencyStopped() != 0U)
+  {
+    send_nack(APP_BUSINESS_CMD_MANUAL_OUTPUT, sequence,
+              IAP_ERR_BAD_STATE, sequence, 0U);
     return;
   }
 
@@ -1527,6 +1806,22 @@ static void handle_set_param_block(uint8_t sequence, const uint8_t *data, uint16
     return;
   }
 
+  if ((group == 2U) && (index == 0U) &&
+      (data_length == sizeof(AppSelfTestConfig_t)))
+  {
+    AppSelfTestConfig_t config;
+
+    memcpy(&config, &data[10], sizeof(config));
+    if (AppParam_SetSelfTestConfigDirect(&config) != HAL_OK)
+    {
+      send_nack(APP_BUSINESS_CMD_SET_PARAM_BLOCK, sequence, IAP_ERR_CONFIG, sequence, 0U);
+      return;
+    }
+    AppParam_SetRevision(revision + 1U);
+    send_ack(APP_BUSINESS_CMD_SET_PARAM_BLOCK, sequence, revision + 1U);
+    return;
+  }
+
   send_nack(APP_BUSINESS_CMD_SET_PARAM_BLOCK, sequence, IAP_ERR_CONFIG, sequence, 0U);
 }
 
@@ -1575,7 +1870,8 @@ static void handle_restore_defaults(uint8_t sequence, const uint8_t *data, uint1
     return;
   }
 
-  if ((AutoProcess_IsRunning() != 0U) || (TaskClean_IsRunning() != 0U))
+  if ((AutoProcess_IsRunning() != 0U) || (TaskClean_IsRunning() != 0U) ||
+          (TaskSelfTest_IsRunning() != 0U))
   {
     send_nack(APP_BUSINESS_CMD_RESTORE_DEFAULTS, sequence,
               IAP_ERR_BUSY, sequence, 0U);
@@ -1736,7 +2032,11 @@ void AppIap_Init(UART_HandleTypeDef *huart)
   telemetry_ack_received = 0U;
   telemetry_ack_tick = 0U;
 #endif
-  fault_bitmap = 0U;
+  last_reported_fault_bitmap = 0U;
+  health_bitmap_snapshot = 0U;
+  fault_event_pending = 0U;
+  fault_pending_start_tick = 0U;
+  fault_last_change_tick = 0U;
   fault_event_id = 0U;
   AutoDevice_ClearFault();
   status_snapshot_valid = 0U;
@@ -1744,8 +2044,11 @@ void AppIap_Init(UART_HandleTypeDef *huart)
   status_report_requested = 1U;
   now = HAL_GetTick();
   state_check_tick = now;
+  stage_test_active_snapshot = 0U;
   status_heartbeat_tick = now;
   io_heartbeat_tick = now;
+  self_test_result_tick = 0U;
+  self_test_result_sequence = 0U;
   send_app_ready(next_business_sequence());
 }
 
@@ -1821,6 +2124,14 @@ void AppIap_ProcessByte(uint8_t byte)
 void AppIap_Service(void)
 {
   uint32_t now = HAL_GetTick();
+  SelfTestResult self_test_result;
+
+  if ((TaskSelfTest_GetPendingResult(&self_test_result) != 0U) &&
+      ((self_test_result_tick == 0U) ||
+       ((now - self_test_result_tick) >= APP_INTERACTION_RESEND_MS)))
+  {
+    send_self_test_result(next_business_sequence(), &self_test_result);
+  }
 
 #if (APP_IAP_TELEMETRY_ENABLE != 0U)
   if ((uint32_t)(now - telemetry_tick) >= 1000U)
@@ -1854,6 +2165,115 @@ void AppIap_Service(void)
     uint8_t io_changed;
 
     state_check_tick = now;
+
+    /*
+     * 单阶段测试退出（自然结束、主动停止、故障复位、急停）后自动回到手动模式。
+     * 这里先切模式再构建状态包：requested_auto_mode 入队即更新，
+     * 上位机收到的第一帧 A1 就直接是手动模式，不会闪过自动模式。
+     */
+    {
+      uint8_t stage_test_active = AutoProcess_IsStageTestActive();
+      if ((stage_test_active_snapshot != 0U) && (stage_test_active == 0U))
+      {
+        TaskOutput_SetAutoMode(0U);
+      }
+      stage_test_active_snapshot = stage_test_active;
+    }
+
+    /*
+     * 自动模式下出现活动故障（含485从站失联）时自动切回手动模式：
+     * 停止清洗/自检、复位自动流程并撤销自动输出请求，让上位机直接
+     * 回到可手动干预的状态。单阶段测试期间由测试自身收尾，不在此处理。
+     */
+    if ((TaskOutput_IsAutoMode() != 0U) &&
+        (AutoProcess_IsStageTestActive() == 0U) &&
+        (AutoDevice_GetFault() != AUTO_FAULT_NONE))
+    {
+      TaskComm485_InhibitNonzero(COMM485_INHIBIT_MODE_CHANGE);
+      TaskComm485_RequestSafeStop();
+      TaskClean_Stop();
+      TaskSelfTest_Stop();
+      AutoDevice_SetPaused(0U);
+      AutoDevice_SetStopRequested(0U);
+      AutoProcess_RequestReset();
+      TaskOutput_ClearSource(APP_OUTPUT_SOURCE_AUTO);
+      TaskOutput_SetAutoMode(0U);
+    }
+
+    /* 故障/健康位图变化聚合上报：巡检置位的新故障与位图变化（恢复、
+     * 故障复位）都在 500ms 窗口内合并成一帧 A4 事件；位图持续变化则
+     * 顺延窗口，但最长等待不超过 APP_FAULT_EVENT_AGGREGATE_MAX_MS。 */
+    {
+      uint32_t health_bitmap = TaskComm485_GetHealthBitmap();
+      uint32_t aggregate_tick = HAL_GetTick();
+
+      if ((fault_event_pending == 0U) &&
+          (health_bitmap != health_bitmap_snapshot))
+      {
+        fault_event_pending = 1U; /* 仅位图变化（恢复等） */
+        fault_pending_start_tick = aggregate_tick;
+        fault_last_change_tick = aggregate_tick;
+      }
+      if (fault_event_pending != 0U)
+      {
+        if (health_bitmap != health_bitmap_snapshot)
+        {
+          fault_last_change_tick = aggregate_tick;
+        }
+        if (((aggregate_tick - fault_last_change_tick) >= APP_FAULT_EVENT_AGGREGATE_MS) ||
+            ((aggregate_tick - fault_pending_start_tick) >= APP_FAULT_EVENT_AGGREGATE_MAX_MS))
+        {
+          uint8_t had_new_fault = fault_event_pending;
+
+          fault_event_pending = 0U;
+          if (had_new_fault == 2U)
+          {
+            if (pending_fault_count != 0U)
+            {
+              /* 逐从站：队列里每个具体故障码各发一条 A4，上位机历史逐条显示。
+               * 先在临界区内快照到本地，发送期间新入队的码不会被清掉或覆盖。 */
+              uint16_t drain_codes[APP_FAULT_PENDING_MAX];
+              uint8_t drain_count;
+              uint8_t drain_index;
+
+              taskENTER_CRITICAL();
+              drain_count = pending_fault_count;
+              if (drain_count != 0U)
+              {
+                memcpy(drain_codes, pending_fault_codes,
+                       drain_count * sizeof(uint16_t));
+                pending_fault_count = 0U;
+              }
+              taskEXIT_CRITICAL();
+
+              for (drain_index = 0U; drain_index < drain_count; ++drain_index)
+              {
+                uint8_t drain_severity = 3U;
+                uint32_t drain_extra = 0U;
+
+                if (drain_codes[drain_index] == (uint16_t)AUTO_FAULT_EMERGENCY_STOP)
+                {
+                  drain_severity = 4U;
+                  drain_extra = (1UL << 0);
+                }
+                send_fault_event_frame(next_business_sequence(),
+                                       drain_codes[drain_index],
+                                       drain_severity, drain_extra);
+              }
+            }
+            else
+            {
+              send_fault_event(next_business_sequence(), AUTO_REPORT_SENSOR_FAULT);
+            }
+          }
+          else
+          {
+            send_fault_update_event(next_business_sequence());
+          }
+        }
+      }
+    }
+
     build_device_status_payload(status_payload);
     build_io_status_payload(io_payload);
 
@@ -1915,7 +2335,29 @@ void AutoDevice_OnReport(AutoReport report)
 {
   switch (report)
   {
+    case AUTO_REPORT_FAULT_CLEARED:
+      /* 故障解除（如急停信号恢复）：丢弃待聚合状态与待发故障码并立即补发
+       * 故障更新/解除事件，让上位机及时清除报警显示。 */
+      fault_event_pending = 0U;
+      taskENTER_CRITICAL();
+      pending_fault_count = 0U;
+      taskEXIT_CRITICAL();
+      send_fault_update_event(next_business_sequence());
+      break;
+
     case AUTO_REPORT_SENSOR_FAULT:
+      /* 不立即发帧：把本次具体故障码入待发队列，由周期状态检查聚合 500ms。
+       * 窗口关闭后逐码各发一条 A4，保证每个从站具体故障码单独上报。 */
+      pending_fault_push((uint16_t)AutoDevice_GetFault());
+      if (fault_event_pending == 0U)
+      {
+        fault_pending_start_tick = HAL_GetTick();
+      }
+      fault_event_pending = 2U; /* 有新故障 */
+      fault_last_change_tick = HAL_GetTick();
+      status_report_requested = 1U;
+      break;
+
     case AUTO_REPORT_TIMEOUT_FAULT:
       send_fault_event(next_business_sequence(), report);
       status_report_requested = 1U;

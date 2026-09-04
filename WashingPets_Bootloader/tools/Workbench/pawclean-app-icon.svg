@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0.3" y2="1">
+      <stop offset="0%" stop-color="#26C6DA"/>
+      <stop offset="50%" stop-color="#0097A7"/>
+      <stop offset="100%" stop-color="#006064"/>
+    </linearGradient>
+    <radialGradient id="gloss" cx="0.38" cy="0.28" r="0.52">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="ps" x="-8%" y="-5%" width="116%" height="125%">
+      <feDropShadow dx="0" dy="5" stdDeviation="8" flood-color="#003D3D" flood-opacity="0.3"/>
+    </filter>
+    <clipPath id="clip">
+      <circle cx="256" cy="256" r="244"/>
+    </clipPath>
+  </defs>
+
+  <!-- Outer subtle ring -->
+  <circle cx="256" cy="256" r="252" fill="none" stroke="#B2EBF2" stroke-width="1.5" opacity="0.35"/>
+
+  <g clip-path="url(#clip)">
+    <!-- Background -->
+    <circle cx="256" cy="256" r="244" fill="url(#bg)"/>
+
+    <!-- Gloss -->
+    <ellipse cx="220" cy="180" rx="200" ry="160" fill="url(#gloss)"/>
+
+    <!-- Paw print -->
+    <g filter="url(#ps)">
+      <!-- Toe pads -->
+      <ellipse cx="162" cy="195" rx="36" ry="46" fill="#FFFFFF" opacity="0.95" transform="rotate(-18 162 195)"/>
+      <ellipse cx="226" cy="148" rx="33" ry="43" fill="#FFFFFF" opacity="0.95" transform="rotate(-5 226 148)"/>
+      <ellipse cx="296" cy="150" rx="33" ry="43" fill="#FFFFFF" opacity="0.95" transform="rotate(7 296 150)"/>
+      <ellipse cx="358" cy="200" rx="36" ry="46" fill="#FFFFFF" opacity="0.95" transform="rotate(20 358 200)"/>
+
+      <!-- Palm pad -->
+      <path d="M 262 265
+               C 318 265, 365 302, 365 348
+               C 365 394, 325 425, 280 430
+               Q 262 433, 244 430
+               C 199 425, 159 394, 159 348
+               C 159 302, 206 265, 262 265 Z"
+            fill="#FFFFFF" opacity="0.95"/>
+    </g>
+
+    <!-- Water droplet accent (bottom-right) -->
+    <path d="M 400 395 Q 400 378, 412 365 Q 424 378, 424 395 Q 424 408, 412 412 Q 400 408, 400 395 Z"
+          fill="#FFFFFF" opacity="0.35"/>
+    <path d="M 430 375 Q 430 365, 437 358 Q 444 365, 444 375 Q 444 382, 437 384 Q 430 382, 430 375 Z"
+          fill="#FFFFFF" opacity="0.2"/>
+  </g>
+</svg>

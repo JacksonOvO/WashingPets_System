@@ -37,6 +37,7 @@ void TaskComm485_Create(void);
  */
 HAL_StatusTypeDef TaskComm485_RequestSetPercent(uint8_t station,
                                                 uint8_t percent);
+HAL_StatusTypeDef TaskComm485_ForceSetPercent(uint8_t station, uint8_t percent);
 HAL_StatusTypeDef TaskComm485_RequestSetProportionalValveAngle(uint8_t angle);
 HAL_StatusTypeDef TaskComm485_RequestSetBoosterPumpPercent(uint8_t percent);
 HAL_StatusTypeDef TaskComm485_RequestSetBoosterPumpRunning(uint8_t enabled);
@@ -46,13 +47,25 @@ uint8_t TaskComm485_GetLastPercent(uint8_t station);
 uint8_t TaskComm485_GetLastProportionalValveAngle(void);
 uint8_t TaskComm485_GetLastBoosterPumpPercent(void);
 uint8_t TaskComm485_GetBoosterPumpFeedbackPressure(void);
+uint8_t TaskComm485_GetBoosterPumpFeedback(uint8_t *pressure_x10);
 uint8_t TaskComm485_GetLastBoosterPumpRunning(void);
+uint32_t TaskComm485_GetStationSuccessCount(uint8_t station);
+void TaskComm485_SetSelfTestPressurePriority(uint8_t enabled);
 void TaskComm485_SetRs485ActuatorMode(uint8_t enabled);
 uint8_t TaskComm485_IsRs485ActuatorMode(void);
 void TaskComm485_RequestSafeStop(void);
 void TaskComm485_InhibitNonzero(uint32_t reasons);
 void TaskComm485_ReleaseNonzero(uint32_t reasons);
 uint32_t TaskComm485_GetInhibitReasons(void);
+
+/*
+ * 健康巡检接口：bitmap 按协议 13.1 故障类别位，随传感器与
+ * 485 从站在线状态实时置位/清除；空载仿真下恒为健康。
+ */
+uint32_t TaskComm485_GetHealthBitmap(void);
+uint8_t TaskComm485_IsAllHealthy(void);
+uint16_t TaskComm485_GetFirstHealthFault(void);
+void TaskComm485_ResetHealthFaults(void);
 
 /*
  * 获取 RS485 线程缓存的最新环境数据，不会直接访问 USART1。

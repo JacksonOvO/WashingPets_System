@@ -10,6 +10,7 @@
 #include <string.h>
 #include "task_comm485.h"
 #include "task_output.h"
+#include "task_self_test.h"
 #include "task_watchdog.h"
 
 /* 水箱恒温线程配置。 */
@@ -328,6 +329,17 @@ static void request_valve_angle(uint8_t target, uint8_t force)
   uint8_t command_angle = plan_angle_move(target);
   uint32_t now = HAL_GetTick();
 
+  /*
+   * 自动流程安全联锁（防溢流）：TANK_HIGH 为反逻辑，0=已到高液位。
+   * 水箱到高液位后禁止继续打开混合比例阀（它也在向箱内补水）。
+   * 手动控制/自检路径不经过这里（联锁已从 TaskComm485_RequestSetProportionalValveAngle 移出）。
+   */
+  if ((command_angle != 0U) &&
+      (AutoDevice_ReadInput(AUTO_INPUT_TANK_HIGH) == 0U))
+  {
+    return;
+  }
+
   if ((force == 0U) && (command_angle == current_valve_angle))
   {
     return;
@@ -559,6 +571,14 @@ static void process_water_tank(void)
   int16_t recirc_stop_x10;
 
   uint8_t auto_mode = TaskOutput_IsAutoMode();
+
+  if (TaskSelfTest_IsRunning() != 0U)
+  {
+    water_tank_state = WATER_TANK_STATE_IDLE;
+    water_tank_recirc_active = 0U;
+    hot_drain_active = 0U;
+    return;
+  }
 
   protect_booster_pump();
 
@@ -819,6 +839,15 @@ static void WaterTankTask(void *argument)
     process_water_tank();
     osDelay(WATER_TANK_PERIOD_MS);
   }
+}
+
+uint8_t TaskWaterTank_GetHotFillValveAngle(void)
+{
+  AutoSensorData sensors = {0};
+  const AppRecipe_t *recipe = AppParam_GetActiveRecipe();
+
+  (void)AutoDevice_GetSensorData(&sensors);
+  return heat_valve_angle_for_sensors(&sensors, recipe);
 }
 
 void TaskWaterTank_Create(void)

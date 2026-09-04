@@ -1,4 +1,5 @@
 #include "temperature_module.h"
+#include "rs485_config.h"
 
 #define TEMP_MODULE_FUNC_READ             0x04U
 #define TEMP_MODULE_REGISTER_COUNT        4U
@@ -10,12 +11,14 @@
 #define TEMP_MODULE_INVALID_VALUE         0xFFFFU
 #define TEMP_MODULE_MIN_VALID_X10         (-400)
 #define TEMP_MODULE_MAX_VALID_X10         1250
-/* Bit0~Bit3 对应温度采集模块 CH1~CH4。
- * CH4 当前用作冷热水混合后的进水温度反馈，因此四路全部启用。
- */
-#define TEMP_MODULE_CHANNEL_ENABLE_MASK   0x0FU
-
 static UART_HandleTypeDef *temperature_module_uart;
+
+static const int16_t fixed_temperature_x10[4] = {
+  RS485_FIXED_INLET_TEMP_X10,
+  RS485_FIXED_TANK_TEMP_X10,
+  RS485_FIXED_PIPE_TEMP_X10,
+  RS485_FIXED_SPARE_TEMP_X10
+};
 
 static uint16_t modbus_crc16(const uint8_t *data, uint16_t length)
 {
@@ -227,10 +230,10 @@ TemperatureModuleStatus TemperatureModule_ReadAll(
   {
     raw = ((uint16_t)response[3U + channel * 2U] << 8U) |
           response[4U + channel * 2U];
-    if ((TEMP_MODULE_CHANNEL_ENABLE_MASK & (1U << channel)) == 0U)
+    if ((RS485_TEMPERATURE_CHANNEL_ENABLE_MASK & (1U << channel)) == 0U)
     {
-      data->temperature_x10[channel] = 0;
-      data->valid[channel] = 0U;
+      data->temperature_x10[channel] = fixed_temperature_x10[channel];
+      data->valid[channel] = 1U;
     }
     else
     {

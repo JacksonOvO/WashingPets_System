@@ -52,6 +52,8 @@ void AutoProcess_ClearStageTest(AutoProcessStage stage);
 uint8_t AutoProcess_GetStageTestFlag(AutoProcessStage stage);
 uint8_t AutoProcess_IsRunning(void);
 uint8_t AutoProcess_IsStageTest(void);
+/* 查询是否处于单阶段测试（含已提交但尚未启动的测试请求）。 */
+uint8_t AutoProcess_IsStageTestActive(void);
 uint16_t AutoProcess_GetCurrentStage(void);
 uint16_t AutoProcess_GetCurrentStepId(void);
 void AutoProcess_GetStatus(AutoProcessStatus *status);

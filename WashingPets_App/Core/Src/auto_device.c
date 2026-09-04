@@ -313,9 +313,12 @@ HAL_StatusTypeDef AutoDevice_SetBoosterPumpPercent(uint8_t percent)
 
 HAL_StatusTypeDef AutoDevice_SetBoosterPumpRunning(uint8_t enabled)
 {
-  return TaskOutput_Request(APP_OUTPUT_SOURCE_AUTO,
-                            AUTO_OUTPUT_BOOSTER_PUMP_RUN,
-                            enabled);
+  if ((enabled != 0U) &&
+      (AutoDevice_ReadInput(AUTO_INPUT_TANK_LOW) != 0U))
+  {
+    return HAL_BUSY;
+  }
+  return TaskComm485_RequestSetBoosterPumpRunning(enabled);
 }
 
 /*
@@ -593,13 +596,15 @@ uint8_t AutoDevice_IsStopRequested(void)
  * PB2急停采用失电安全接法：
  * 正常时外部常闭回路把PB2拉低；急停按下、线路断开或信号丢失时，
  * 内部上拉使PB2变高，此时返回1表示急停。
+ * 读取消抖后的稳定输入（30ms持续断开才认定急停），
+ * 避免机械触点毛刺造成误报；失电安全语义不变。
  */
 uint8_t AutoDevice_IsEmergencyStopped(void)
 {
 #if (APP_DRY_RUN_ENABLE != 0U)
   return 0U;
 #else
-  return (AutoDevice_ReadInputRaw(AUTO_INPUT_EMERGENCY_STOP) == 0U) ? 1U : 0U;
+  return (AutoDevice_ReadInput(AUTO_INPUT_EMERGENCY_STOP) == 0U) ? 1U : 0U;
 #endif
 }
 
@@ -648,7 +653,12 @@ AutoFaultCode AutoDevice_GetFault(void)
 
 void AutoDevice_ClearFault(void)
 {
-  last_fault_code = AUTO_FAULT_NONE;
+  /*
+   * 清除故障锁存时同步健康位图：若仍有传感器/485 从站被巡检判定断连，
+   * 保留其具体故障码而不是归零。否则流程复位会误清活动故障，
+   * 造成位图仍有故障、故障码却为空，上报时兜底成 1 被上位机误读为急停。
+   */
+  last_fault_code = (AutoFaultCode)TaskComm485_GetFirstHealthFault();
   TaskComm485_ReleaseNonzero(COMM485_INHIBIT_FAULT);
 }
 

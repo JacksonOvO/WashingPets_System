@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+APP_DIR="/opt/pawclean-workbench"
+cd "${APP_DIR}"
+
+exec python3 gtk_app.py

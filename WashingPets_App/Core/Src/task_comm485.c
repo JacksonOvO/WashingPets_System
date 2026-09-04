@@ -9,6 +9,7 @@
 #include "temperature_module.h"
 #include "thyristor.h"
 #include "task_watchdog.h"
+#include "task_self_test.h"
 
 #include <string.h>
 
@@ -17,17 +18,20 @@
 #define COMM485_QUEUE_LENGTH          32U
 #define COMM485_SENSOR_PERIOD_MS       1000U
 #define COMM485_SENSOR_SLOT_PERIOD_MS  250U
+#define COMM485_SELF_TEST_PRESSURE_PERIOD_MS 100U
 #define COMM485_SENSOR_STALE_MS        5000U
+#define COMM485_PROBE_PERIOD_MS        250U
+#define COMM485_PROBE_GAP_MS           200U
 #define COMM485_MAX_COMMANDS_PER_LOOP     1U
 #define COMM485_COMMAND_RETRY_MAX         2U
 #define COMM485_RETRY_BACKOFF_BASE_MS    250U
 #define COMM485_RETRY_BACKOFF_MAX_MS    2000U
-#define COMM485_DEBUG_ENABLE           0U
+#define COMM485_DEBUG_ENABLE           1U
 #define COMM485_PROP_VALVE_REG_ANGLE   0x0001U
 #define COMM485_PROP_VALVE_MAX_ANGLE   90U
 #define COMM485_BOOSTER_REG_FREQ       0x0000U
 #define COMM485_BOOSTER_REG_FEEDBACK_PRESSURE 0x1010U
-#define COMM485_BOOSTER_REG_SET_PRESSURE      0x101FU
+#define COMM485_BOOSTER_REG_SET_PRESSURE      0x100FU
 #define COMM485_BOOSTER_REG_CONTROL    0x2000U
 #define COMM485_BOOSTER_CMD_FORWARD    0x0001U
 #define COMM485_BOOSTER_CMD_STOP       0x0006U
@@ -83,6 +87,8 @@ static volatile uint8_t pending_booster_pump_running_valid;
 static volatile uint8_t rs485_actuator_mode;
 static uint8_t station_failure_count[248];
 static uint32_t station_next_retry_tick[248];
+static volatile uint32_t station_success_count[248];
+static volatile uint8_t self_test_pressure_priority;
 
 static const osThreadAttr_t comm485_task_attributes = {
   .name = "comm485",
@@ -90,7 +96,14 @@ static const osThreadAttr_t comm485_task_attributes = {
   .priority = COMM485_TASK_PRIORITY,
 };
 
+static void health_update_prop_valve(uint8_t ok);
+
 #if (APP_DRY_RUN_ENABLE != 0U)
+static void health_update_prop_valve(uint8_t ok)
+{
+  (void)ok;
+}
+
 static void dry_run_fill_environment(TaskComm485EnvironmentData *data)
 {
   uint32_t now = HAL_GetTick();
@@ -285,8 +298,8 @@ void TemperatureModule_OnReceive(const uint8_t *data, uint16_t length)
   uart2_print_hex_line(prefix, (uint16_t)(sizeof(prefix) - 1U), data, length);
 }
 
-HAL_StatusTypeDef TaskComm485_RequestSetPercent(uint8_t station,
-                                                uint8_t percent)
+static HAL_StatusTypeDef request_set_percent(uint8_t station, uint8_t percent,
+                                             uint8_t force)
 {
 #if (APP_DRY_RUN_ENABLE != 0U)
   if ((station == 0U) || (station > 247U))
@@ -318,9 +331,10 @@ HAL_StatusTypeDef TaskComm485_RequestSetPercent(uint8_t station,
   {
     return HAL_BUSY;
   }
-  if ((last_percent_by_station[station] == percent) ||
-      ((pending_percent_valid_by_station[station] != 0U) &&
-       (pending_percent_by_station[station] == percent)))
+  if ((force == 0U) &&
+      ((last_percent_by_station[station] == percent) ||
+       ((pending_percent_valid_by_station[station] != 0U) &&
+        (pending_percent_by_station[station] == percent))))
   {
     return HAL_OK;
   }
@@ -339,6 +353,16 @@ HAL_StatusTypeDef TaskComm485_RequestSetPercent(uint8_t station,
   }
   return HAL_BUSY;
 #endif
+}
+
+HAL_StatusTypeDef TaskComm485_RequestSetPercent(uint8_t station, uint8_t percent)
+{
+  return request_set_percent(station, percent, 0U);
+}
+
+HAL_StatusTypeDef TaskComm485_ForceSetPercent(uint8_t station, uint8_t percent)
+{
+  return request_set_percent(station, percent, 1U);
 }
 
 uint8_t TaskComm485_GetLastPercent(uint8_t station)
@@ -375,6 +399,32 @@ uint8_t TaskComm485_GetBoosterPumpFeedbackPressure(void)
 uint8_t TaskComm485_GetLastBoosterPumpRunning(void)
 {
   return last_booster_pump_running;
+}
+
+uint8_t TaskComm485_GetBoosterPumpFeedback(uint8_t *pressure_x10)
+{
+  if ((pressure_x10 == NULL) || (booster_pump_feedback_valid == 0U) ||
+      ((HAL_GetTick() - booster_pump_feedback_tick) > COMM485_SENSOR_STALE_MS))
+  {
+    return 0U;
+  }
+  *pressure_x10 = booster_pump_feedback_pressure_x10;
+  return 1U;
+}
+
+uint32_t TaskComm485_GetStationSuccessCount(uint8_t station)
+{
+  return (station <= 247U) ? station_success_count[station] : 0U;
+}
+
+void TaskComm485_SetSelfTestPressurePriority(uint8_t enabled)
+{
+  self_test_pressure_priority = (enabled != 0U) ? 1U : 0U;
+  if (enabled != 0U)
+  {
+    booster_pump_feedback_valid = 0U;
+  }
+  sensor_poll_tick = 0U;
 }
 
 void TaskComm485_SetRs485ActuatorMode(uint8_t enabled)
@@ -418,10 +468,12 @@ HAL_StatusTypeDef TaskComm485_RequestSetProportionalValveAngle(uint8_t angle)
   {
     return HAL_BUSY;
   }
-  if ((angle != 0U) && (AutoDevice_ReadInput(AUTO_INPUT_TANK_HIGH) == 0U))
-  {
-    return HAL_BUSY;
-  }
+  /*
+   * 水箱高液位联锁（防溢流）已移回自动调温路径（task_water_tank.c 的
+   * request_valve_angle）：TANK_HIGH 为反逻辑，0=已到高液位，满箱后自动
+   * 流程不再开混合阀。此处不再检查液位，工作台手动控制、单阶段自检在
+   * 任意液位下都能驱动比例阀，便于验证阀体动作。
+   */
   if ((last_proportional_valve_angle == angle) ||
       ((pending_proportional_valve_angle_valid != 0U) &&
        (pending_proportional_valve_angle == angle)))
@@ -455,6 +507,7 @@ static HAL_StatusTypeDef request_set_booster_pump_percent(uint8_t percent,
     percent = 100U;
   }
   last_booster_pump_percent = percent;
+  station_success_count[RS485_STATION_BOOSTER_PUMP]++;
   booster_pump_feedback_pressure_x10 = percent;
   booster_pump_feedback_valid = 1U;
   booster_pump_feedback_tick = HAL_GetTick();
@@ -640,6 +693,7 @@ static HAL_StatusTypeDef apply_percent(uint8_t station, uint8_t percent)
       current_percent = percent;
     }
     last_percent_by_station[station] = percent;
+    station_success_count[station]++;
     if (pending_percent_by_station[station] == percent)
     {
       pending_percent_valid_by_station[station] = 0U;
@@ -674,8 +728,10 @@ static HAL_StatusTypeDef apply_proportional_valve_angle(uint8_t angle)
     {
       pending_proportional_valve_angle_valid = 0U;
     }
+    health_update_prop_valve(1U);
     return HAL_OK;
   }
+  health_update_prop_valve(0U);
   return HAL_ERROR;
 }
 
@@ -707,6 +763,7 @@ static HAL_StatusTypeDef apply_booster_pump_percent(uint8_t percent)
   }
 
   last_booster_pump_percent = percent;
+  station_success_count[RS485_STATION_BOOSTER_PUMP]++;
   if (pending_booster_pump_percent == percent)
   {
     pending_booster_pump_percent_valid = 0U;
@@ -871,6 +928,11 @@ static uint8_t station_retry_due(uint8_t station)
 
 static void report_dropped_command(const Comm485Command *command)
 {
+  if (TaskSelfTest_IsRunning() != 0U)
+  {
+    clear_pending_command(command);
+    return;
+  }
   AutoDevice_SetFault(station_fault_code(command->station));
   AutoDevice_SetStopRequested(1U);
   AutoDevice_Report(AUTO_REPORT_SENSOR_FAULT);
@@ -914,12 +976,14 @@ static void apply_all_actuators_zero(void)
   TaskWatchdog_Heartbeat(TASK_WATCHDOG_COMM485);
   apply_percent(RS485_STATION_BOTTOM_FAN, 0U);
   TaskWatchdog_Heartbeat(TASK_WATCHDOG_COMM485);
+#if (RS485_TOP_EXHAUST_PRESENT != 0U)
   if (rs485_actuator_mode != 0U)
   {
     pending_percent_valid_by_station[RS485_STATION_TOP_EXHAUST_FAN] = 0U;
     apply_percent(RS485_STATION_TOP_EXHAUST_FAN, 0U);
     TaskWatchdog_Heartbeat(TASK_WATCHDOG_COMM485);
   }
+#endif
   pending_booster_pump_running_valid = 0U;
   pending_booster_pump_percent_valid = 0U;
   apply_booster_pump_running(0U);
@@ -937,6 +1001,139 @@ static void apply_all_actuators_zero(void)
  * TaskComm485_GetEnvironmentData() 获取，不能直接访问 USART1。
  */
 #if (APP_DRY_RUN_ENABLE == 0U)
+
+/*
+ * 健康巡检：跟踪传感器源与执行器从站在线状态。
+ * 时间制判定：COMM485_HEALTH_FAULT_AFTER_MS 内没有一次成功读取即置对应源
+ * 故障并经 AutoDevice 上报 A4；连续 2 次读取成功才确认恢复清位，
+ * 防止不稳定总线上偶发成功读造成报警抖动。
+ * bitmap_bits 对应协议 13.1 故障类别位。
+ */
+typedef enum
+{
+  COMM485_HEALTH_INLET_TEMP = 0,
+  COMM485_HEALTH_TANK_TEMP,
+  COMM485_HEALTH_PIPE_TEMP,
+  COMM485_HEALTH_SPARE_TEMP,
+  COMM485_HEALTH_OXYGEN,
+  COMM485_HEALTH_INCAB_TRH,
+  COMM485_HEALTH_OZONE,
+  COMM485_HEALTH_BOOSTER_PUMP,
+  COMM485_HEALTH_PROP_VALVE,
+  COMM485_HEALTH_LEFT_FAN,
+  COMM485_HEALTH_RIGHT_FAN,
+  COMM485_HEALTH_BOTTOM_FAN,
+  COMM485_HEALTH_TOP_EXHAUST_FAN,
+  COMM485_HEALTH_LEFT_HEATER,
+  COMM485_HEALTH_RIGHT_HEATER,
+  COMM485_HEALTH_BOTTOM_HEATER,
+  COMM485_HEALTH_SOURCE_COUNT
+} Comm485HealthSource;
+
+typedef struct
+{
+  uint16_t fault_code;
+  uint32_t bitmap_bits;
+} Comm485HealthSourceInfo;
+
+/* 时间制判定：该间隔内没有一次成功读取即判故障。
+ * 取值必须大于巡检最长一轮周期的两倍，否则在线时会误报；
+ * 以后从站数量增多导致一轮周期变长时要同步调大。
+ * 当前执行器 8 站 × 250ms 一轮约 2s，两倍约 4s，
+ * 取 5000ms 留出余量，容忍约两次偶发漏读不误报。 */
+#define COMM485_HEALTH_FAULT_AFTER_MS 5000U
+#define COMM485_HEALTH_RECOVER_COUNT  2U
+
+static const Comm485HealthSourceInfo health_source_info[COMM485_HEALTH_SOURCE_COUNT] =
+{
+  { (uint16_t)AUTO_FAULT_INLET_TEMP_SENSOR_INVALID, (1UL << 18) },
+  { (uint16_t)AUTO_FAULT_TANK_TEMP_SENSOR_INVALID, (1UL << 5) },
+  { (uint16_t)AUTO_FAULT_PIPE_TEMP_SENSOR_INVALID, (1UL << 6) },
+  { (uint16_t)AUTO_FAULT_SPARE_TEMP_SENSOR_INVALID, (1UL << 19) },
+  { (uint16_t)AUTO_FAULT_OXYGEN_SENSOR_INVALID, (1UL << 11) },
+  { (uint16_t)AUTO_FAULT_CABIN_TEMP_SENSOR_INVALID, (1UL << 12) },
+  { (uint16_t)AUTO_FAULT_OZONE_SENSOR_INVALID, (1UL << 14) },
+  { (uint16_t)AUTO_FAULT_485_BOOSTER_PUMP_COMM, (1UL << 14) },
+  { (uint16_t)AUTO_FAULT_485_PROPORTIONAL_VALVE_COMM, (1UL << 7) | (1UL << 14) },
+  { (uint16_t)AUTO_FAULT_485_LEFT_FAN_COMM, (1UL << 14) },
+  { (uint16_t)AUTO_FAULT_485_RIGHT_FAN_COMM, (1UL << 14) },
+  { (uint16_t)AUTO_FAULT_485_BOTTOM_FAN_COMM, (1UL << 14) },
+  { (uint16_t)AUTO_FAULT_485_TOP_EXHAUST_COMM, (1UL << 14) },
+  { (uint16_t)AUTO_FAULT_485_LEFT_HEATER_COMM, (1UL << 14) },
+  { (uint16_t)AUTO_FAULT_485_RIGHT_HEATER_COMM, (1UL << 14) },
+  { (uint16_t)AUTO_FAULT_485_BOTTOM_HEATER_COMM, (1UL << 14) },
+};
+
+static uint32_t health_last_ok_tick[COMM485_HEALTH_SOURCE_COUNT];
+static uint8_t health_faulted[COMM485_HEALTH_SOURCE_COUNT];
+static uint8_t health_ok_count[COMM485_HEALTH_SOURCE_COUNT];
+static volatile uint32_t health_fault_bitmap;
+static uint8_t actuator_probe_index;
+static uint32_t actuator_probe_tick;
+static uint32_t bus_last_response_tick;
+
+static void health_update_source(Comm485HealthSource source, uint8_t ok)
+{
+  const Comm485HealthSourceInfo *info = &health_source_info[source];
+
+  if (ok != 0U)
+  {
+    bus_last_response_tick = HAL_GetTick();
+    health_last_ok_tick[source] = bus_last_response_tick;
+    if (health_faulted[source] != 0U)
+    {
+      /* 恢复需连续成功 COMM485_HEALTH_RECOVER_COUNT 次，
+       * 防止不稳定总线上偶发一次成功读造成报警抖动。 */
+      if (health_ok_count[source] < 255U)
+      {
+        health_ok_count[source]++;
+      }
+      if (health_ok_count[source] >= COMM485_HEALTH_RECOVER_COUNT)
+      {
+        health_ok_count[source] = 0U;
+        health_faulted[source] = 0U;
+        health_fault_bitmap &= ~info->bitmap_bits;
+        /*
+         * 恢复同时同步故障锁存：若当前锁存的正是本源的故障码，则回退为
+         * 剩余仍在断连的从站故障码（无则清零），避免位图已清而 last_fault_code
+         * 残留，导致上位机收到“更新”而非“解除”。若锁存的是流程级故障码则不动，
+         * 防止被健康恢复误覆盖。
+         */
+        if ((AutoFaultCode)info->fault_code == AutoDevice_GetFault())
+        {
+          AutoDevice_SetFault(
+              (AutoFaultCode)TaskComm485_GetFirstHealthFault());
+        }
+      }
+    }
+    else
+    {
+      health_ok_count[source] = 0U;
+    }
+    return;
+  }
+
+  health_ok_count[source] = 0U;
+  if (health_faulted[source] != 0U)
+  {
+    return;
+  }
+  /* 时间制判定：COMM485_HEALTH_FAULT_AFTER_MS 内没有一次成功读取，
+   * 判定对应传感器/从站断连。 */
+  if ((HAL_GetTick() - health_last_ok_tick[source]) >= COMM485_HEALTH_FAULT_AFTER_MS)
+  {
+    health_faulted[source] = 1U;
+    health_fault_bitmap |= info->bitmap_bits;
+    AutoDevice_SetFault((AutoFaultCode)info->fault_code);
+    AutoDevice_Report(AUTO_REPORT_SENSOR_FAULT);
+  }
+}
+
+static void health_update_prop_valve(uint8_t ok)
+{
+  health_update_source(COMM485_HEALTH_PROP_VALVE, ok);
+}
+
 static void process_oxygen_sensor(void)
 {
   OxygenSensorData sensor_data;
@@ -944,6 +1141,8 @@ static void process_oxygen_sensor(void)
   uint32_t now = HAL_GetTick();
 
   status = OxygenSensor_ReadAll(RS485_STATION_OXYGEN_SENSOR, &sensor_data);
+  health_update_source(COMM485_HEALTH_OXYGEN,
+                       (status == OXYGEN_SENSOR_OK) ? 1U : 0U);
   now = HAL_GetTick();
 
   if (environment_mutex == NULL)
@@ -979,6 +1178,8 @@ static void process_incab_trh_sensor(void)
   uint32_t now = HAL_GetTick();
 
   status = OxygenSensor_ReadAll(RS485_STATION_INCABTRH_SENSOR, &sensor_data);
+  health_update_source(COMM485_HEALTH_INCAB_TRH,
+                       (status == OXYGEN_SENSOR_OK) ? 1U : 0U);
   now = HAL_GetTick();
 
   if (environment_mutex == NULL)
@@ -1013,6 +1214,8 @@ static void process_ozone_sensor(void)
   uint32_t now = HAL_GetTick();
 
   status = OxygenSensor_ReadOzone(RS485_STATION_OZONE_SENSOR, &ozone_x100);
+  health_update_source(COMM485_HEALTH_OZONE,
+                       (status == OXYGEN_SENSOR_OK) ? 1U : 0U);
   now = HAL_GetTick();
 
   if (environment_mutex == NULL)
@@ -1052,16 +1255,37 @@ static void process_booster_pump_feedback(void)
                                          100U : (uint8_t)pressure_x10;
     booster_pump_feedback_tick = now;
     booster_pump_feedback_valid = 1U;
+    health_update_source(COMM485_HEALTH_BOOSTER_PUMP, 1U);
   }
-  else if ((booster_pump_feedback_valid != 0U) &&
-           ((now - booster_pump_feedback_tick) > COMM485_SENSOR_STALE_MS))
+  else
   {
-    booster_pump_feedback_valid = 0U;
+    health_update_source(COMM485_HEALTH_BOOSTER_PUMP, 0U);
+    if ((booster_pump_feedback_valid != 0U) &&
+        ((now - booster_pump_feedback_tick) > COMM485_SENSOR_STALE_MS))
+    {
+      booster_pump_feedback_valid = 0U;
+    }
   }
 }
 
 static void process_temperature_module(void)
 {
+#if (RS485_TEMPERATURE_MODULE_PRESENT == 0U)
+  const int16_t temperature_x10[4] = {
+    RS485_FIXED_INLET_TEMP_X10,
+    RS485_FIXED_TANK_TEMP_X10,
+    RS485_FIXED_PIPE_TEMP_X10,
+    RS485_FIXED_SPARE_TEMP_X10
+  };
+  const uint8_t valid[4] = {1U, 1U, 1U, 1U};
+
+  AutoDevice_UpdateTemperatureChannels(temperature_x10, valid);
+  temperature_module_update_tick = HAL_GetTick();
+  health_update_source(COMM485_HEALTH_INLET_TEMP, 1U);
+  health_update_source(COMM485_HEALTH_TANK_TEMP, 1U);
+  health_update_source(COMM485_HEALTH_PIPE_TEMP, 1U);
+  health_update_source(COMM485_HEALTH_SPARE_TEMP, 1U);
+#else
   TemperatureModuleData data = {0};
 
   if (TemperatureModule_ReadAll(RS485_STATION_TEMPERATURE, &data) ==
@@ -1069,16 +1293,90 @@ static void process_temperature_module(void)
   {
     AutoDevice_UpdateTemperatureChannels(data.temperature_x10, data.valid);
     temperature_module_update_tick = HAL_GetTick();
+    health_update_source(COMM485_HEALTH_INLET_TEMP, data.valid[0]);
+    health_update_source(COMM485_HEALTH_TANK_TEMP, data.valid[1]);
+    health_update_source(COMM485_HEALTH_PIPE_TEMP, data.valid[2]);
+    health_update_source(COMM485_HEALTH_SPARE_TEMP, data.valid[3]);
   }
-  else if ((temperature_module_update_tick != 0U) &&
-           ((HAL_GetTick() - temperature_module_update_tick) > COMM485_SENSOR_STALE_MS))
+  else
   {
-    AutoDevice_InvalidateTemperatureChannels();
-    temperature_module_update_tick = 0U;
+    /* 模块通信失败：四个通道各自按 5 秒无响应判定跳故障，无需额外的模块级故障码。 */
+    health_update_source(COMM485_HEALTH_INLET_TEMP, 0U);
+    health_update_source(COMM485_HEALTH_TANK_TEMP, 0U);
+    health_update_source(COMM485_HEALTH_PIPE_TEMP, 0U);
+    health_update_source(COMM485_HEALTH_SPARE_TEMP, 0U);
+    if ((temperature_module_update_tick != 0U) &&
+        ((HAL_GetTick() - temperature_module_update_tick) > COMM485_SENSOR_STALE_MS))
+    {
+      AutoDevice_InvalidateTemperatureChannels();
+      temperature_module_update_tick = 0U;
+    }
   }
+#endif
+}
+
+/*
+ * 执行器从站主动探测：轮询每槽只读探测一站，不改变任何输出，
+ * 用于空闲时发现从站断连。
+ */
+static void process_actuator_probe(void)
+{
+  static const uint8_t probe_stations[] = {
+    /*
+     * 比例阀不参与只读巡检：现场阀体可正常响应 0x06 写角度，但部分型号
+     * 不支持 0x03 读反馈寄存器。比例阀在线状态改由写角度成功/失败判定。
+     */
+    RS485_STATION_LEFT_FAN,
+    RS485_STATION_RIGHT_FAN,
+    RS485_STATION_BOTTOM_FAN,
+#if (RS485_TOP_EXHAUST_PRESENT != 0U)
+    RS485_STATION_TOP_EXHAUST_FAN,
+#endif
+    RS485_STATION_LEFT_HEATER,
+    RS485_STATION_RIGHT_HEATER,
+    RS485_STATION_BOTTOM_HEATER,
+    RS485_STATION_BOOSTER_PUMP
+  };
+  static const uint16_t probe_registers[] = {
+    THYRISTOR_REG_OUTPUT_VOLTAGE,
+    THYRISTOR_REG_OUTPUT_VOLTAGE,
+    THYRISTOR_REG_OUTPUT_VOLTAGE,
+#if (RS485_TOP_EXHAUST_PRESENT != 0U)
+    THYRISTOR_REG_OUTPUT_VOLTAGE,
+#endif
+    THYRISTOR_REG_OUTPUT_VOLTAGE,
+    THYRISTOR_REG_OUTPUT_VOLTAGE,
+    THYRISTOR_REG_OUTPUT_VOLTAGE,
+    COMM485_BOOSTER_REG_FEEDBACK_PRESSURE
+  };
+  static const uint8_t probe_sources[] = {
+    (uint8_t)COMM485_HEALTH_LEFT_FAN,
+    (uint8_t)COMM485_HEALTH_RIGHT_FAN,
+    (uint8_t)COMM485_HEALTH_BOTTOM_FAN,
+#if (RS485_TOP_EXHAUST_PRESENT != 0U)
+    (uint8_t)COMM485_HEALTH_TOP_EXHAUST_FAN,
+#endif
+    (uint8_t)COMM485_HEALTH_LEFT_HEATER,
+    (uint8_t)COMM485_HEALTH_RIGHT_HEATER,
+    (uint8_t)COMM485_HEALTH_BOTTOM_HEATER,
+    (uint8_t)COMM485_HEALTH_BOOSTER_PUMP
+  };
+  uint16_t probe_value;
+  uint8_t index = actuator_probe_index;
+  ThyristorStatus status;
+
+  actuator_probe_index =
+      (uint8_t)((index + 1U) %
+                (uint8_t)(sizeof(probe_stations) / sizeof(probe_stations[0])));
+  /* 探测项统一用 0x03 读探测，不写任何寄存器、无副作用。 */
+  status = Thyristor_ReadRegister(probe_stations[index], probe_registers[index],
+                                  &probe_value);
+  health_update_source((Comm485HealthSource)probe_sources[index],
+                       (status == THYRISTOR_OK) ? 1U : 0U);
 }
 
 #endif
+
 
 static void process_next_sensor(void)
 {
@@ -1091,39 +1389,68 @@ static void process_next_sensor(void)
 #else
   uint32_t now = HAL_GetTick();
 
-  if ((now - sensor_poll_tick) < COMM485_SENSOR_SLOT_PERIOD_MS)
+  if (self_test_pressure_priority != 0U)
   {
+    if ((now - sensor_poll_tick) >= COMM485_SELF_TEST_PRESSURE_PERIOD_MS)
+    {
+      sensor_poll_tick = now;
+      process_booster_pump_feedback();
+    }
     return;
   }
-  sensor_poll_tick = now;
 
-  switch (sensor_poll_slot)
+  if ((now - sensor_poll_tick) >= COMM485_SENSOR_SLOT_PERIOD_MS)
   {
-    case 0U:
-      process_oxygen_sensor();
-      break;
+    sensor_poll_tick = now;
 
-    case 1U:
-      process_temperature_module();
-      break;
+    switch (sensor_poll_slot)
+    {
+      case 0U:
+        process_oxygen_sensor();
+        break;
 
-    case 2U:
-      process_incab_trh_sensor();
-      break;
+      case 1U:
+        process_temperature_module();
+        break;
 
-    case 3U:
-      process_ozone_sensor();
-      break;
+      case 2U:
+        process_incab_trh_sensor();
+        break;
 
-    default:
-      process_booster_pump_feedback();
-      break;
+      case 3U:
+        process_ozone_sensor();
+        break;
+
+      case 4U:
+        process_booster_pump_feedback();
+        break;
+
+      default:
+        break;
+    }
+
+    ++sensor_poll_slot;
+    if (sensor_poll_slot >= 5U)
+    {
+      sensor_poll_slot = 0U;
+    }
   }
 
-  ++sensor_poll_slot;
-  if (sensor_poll_slot >= 5U)
+  /*
+   * 执行器探测独立节拍（250ms 一站）。总线上最近有从站应答时才顺延
+   * 一拍，避免 9600 波特率背靠背事务；断线时所有事务都超时，
+   * 背靠背无害，全速扫描。顺延超过一个传感器槽位周期则强制执行，
+   * 防止探测被饿死。
+   */
+  if ((now - actuator_probe_tick) >= COMM485_PROBE_PERIOD_MS)
   {
-    sensor_poll_slot = 0U;
+    if (((now - bus_last_response_tick) >= COMM485_PROBE_GAP_MS) ||
+        ((now - actuator_probe_tick) >=
+         (COMM485_PROBE_PERIOD_MS + COMM485_SENSOR_SLOT_PERIOD_MS)))
+    {
+      actuator_probe_tick = now;
+      process_actuator_probe();
+    }
   }
 #endif
 }
@@ -1240,10 +1567,86 @@ void TaskComm485_Create(void)
   rs485_actuator_mode = 1U;
   memset(station_failure_count, 0, sizeof(station_failure_count));
   memset(station_next_retry_tick, 0, sizeof(station_next_retry_tick));
+  memset((void *)station_success_count, 0, sizeof(station_success_count));
+  self_test_pressure_priority = 0U;
+#if (APP_DRY_RUN_ENABLE == 0U)
+  {
+    uint32_t boot_tick = HAL_GetTick();
+    uint8_t health_index;
+
+    for (health_index = 0U;
+         health_index < (uint8_t)COMM485_HEALTH_SOURCE_COUNT; ++health_index)
+    {
+      health_last_ok_tick[health_index] = boot_tick;
+    }
+  }
+  bus_last_response_tick = 0U;
+  memset(health_faulted, 0, sizeof(health_faulted));
+  memset(health_ok_count, 0, sizeof(health_ok_count));
+  health_fault_bitmap = 0U;
+  actuator_probe_index = 0U;
+  actuator_probe_tick = 0U;
+#endif
   environment_mutex = osMutexNew(NULL);
   comm485_queue = osMessageQueueNew(COMM485_QUEUE_LENGTH,
                                     sizeof(Comm485Command),
                                     NULL);
   comm485_task_handle = osThreadNew(Comm485Task, NULL, &comm485_task_attributes);
   (void)comm485_task_handle;
+}
+
+
+uint32_t TaskComm485_GetHealthBitmap(void)
+{
+#if (APP_DRY_RUN_ENABLE != 0U)
+  return 0U;
+#else
+  return health_fault_bitmap;
+#endif
+}
+
+uint8_t TaskComm485_IsAllHealthy(void)
+{
+  return (TaskComm485_GetHealthBitmap() == 0U) ? 1U : 0U;
+}
+
+uint16_t TaskComm485_GetFirstHealthFault(void)
+{
+#if (APP_DRY_RUN_ENABLE != 0U)
+  return 0U;
+#else
+  uint8_t index;
+
+  for (index = 0U; index < (uint8_t)COMM485_HEALTH_SOURCE_COUNT; ++index)
+  {
+    if (health_faulted[index] != 0U)
+    {
+      return health_source_info[index].fault_code;
+    }
+  }
+  return 0U;
+#endif
+}
+
+/*
+ * 故障复位时调用：清除巡检故障标记、失败计数与位图，
+ * 使仍然断连的从站在随后几秒内重新置位并再次上报。
+ */
+void TaskComm485_ResetHealthFaults(void)
+{
+#if (APP_DRY_RUN_ENABLE != 0U)
+  return;
+#else
+  uint8_t index;
+
+  for (index = 0U; index < (uint8_t)COMM485_HEALTH_SOURCE_COUNT; ++index)
+  {
+    health_last_ok_tick[index] = HAL_GetTick();
+    health_faulted[index] = 0U;
+    health_ok_count[index] = 0U;
+  }
+  health_fault_bitmap = 0U;
+  /* 复位巡检后位图已清空，同步清掉健康故障锁存，避免故障码残留。 */
+  AutoDevice_SetFault(AUTO_FAULT_NONE);
+#endif
 }

@@ -1,0 +1,11 @@
+Package: pawclean-workbench
+Version: 2.0.0
+Section: devel
+Priority: optional
+Architecture: amd64
+Depends: python3, python3-serial, python3-gi, python3-gi-cairo, gir1.2-gtk-3.0
+Maintainer: Pawtopia Hardware <support@example.com>
+Description: PawClean Pet Washing Machine Workbench
+ Modern Apple/macOS-inspired GTK3 workbench for PawClean pet washing machine.
+ Features: dashboard control center, real-time telemetry, fault center,
+ parameter configuration, IO control, debug tools, and IAP firmware upgrade.

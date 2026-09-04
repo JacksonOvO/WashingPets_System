@@ -76,6 +76,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Src/task_host232.c
     Core/Src/task_life_support.c
     Core/Src/task_output.c
+    Core/Src/task_self_test.c
     Core/Src/task_water_tank.c
     Core/Src/task_watchdog.c
     Core/Src/temperature_module.c

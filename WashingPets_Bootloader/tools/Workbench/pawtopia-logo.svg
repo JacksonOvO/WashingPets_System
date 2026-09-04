@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="148" height="52" viewBox="0 0 148 52">
+  <g transform="translate(2 4)">
+    <rect width="44" height="44" rx="13" fill="#19232e" stroke="#314151"/>
+    <circle cx="12" cy="15" r="4.3" fill="#77dc45"/>
+    <circle cx="22" cy="12.5" r="4.3" fill="#ff9f0a"/>
+    <circle cx="32" cy="15" r="4.3" fill="#32a9ef"/>
+    <path d="M11 27c6.7 7 15.3 7 22 0" fill="none" stroke="#f5f8fb" stroke-width="3.8" stroke-linecap="round"/>
+  </g>
+  <text x="54" y="23" fill="#f5f8fb" font-family="Noto Sans CJK SC, sans-serif" font-size="18" font-weight="800">喜宠岛</text>
+  <text x="54" y="41" fill="#aebdca" font-family="Arial, sans-serif" font-size="14" font-weight="700">Pawtopia</text>
+</svg>

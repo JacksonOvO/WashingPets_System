@@ -24,13 +24,12 @@
 #define BOOTLOADER_APP_CAPACITY      (BOOTLOADER_PARAM_ADDRESS - BOOTLOADER_APP_ADDRESS)
 
 /* 设备身份和版本信息。
- * TARGET_ID 用于防止主机把不属于本硬件的固件刷入设备。
- * VERSION 编码格式为 major.minor.patch：0x00MMmmpp，这里是 0.1.1。
+ * 设备 ID 运行时由芯片 96 位 UID 计算 CRC32 得到，避免写死目标 ID。
+ * VERSION 编码格式为 major.minor.patch：0x00MMmmpp，这里是 2.0.0。
  * REQUEST_MAGIC 由 APP 写入 RTC 备份寄存器，复位后 Bootloader 读取到它
  * 就会停留在升级模式，而不是直接跳转到 APP。
  */
-#define BOOTLOADER_TARGET_ID         0x407A0C06U
-#define BOOTLOADER_VERSION           0x00010100U
+#define BOOTLOADER_VERSION           0x00020000U
 #define BOOTLOADER_REQUEST_MAGIC     0xA55A5AA5U
 
 /* Bootloader 主循环入口。

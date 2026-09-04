@@ -7,6 +7,7 @@
 #include "task_host232.h"
 #include "task_life_support.h"
 #include "task_output.h"
+#include "task_self_test.h"
 #include "task_water_tank.h"
 #include "task_watchdog.h"
 
@@ -50,6 +51,8 @@ void AppTasks_Create(void)
    * 自动流程全部结束后会触发它执行一次自清洁。
    */
   TaskClean_Create();
+
+  TaskSelfTest_Create();
 
   /*
    * 创建水箱恒温后台线程。

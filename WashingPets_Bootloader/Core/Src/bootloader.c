@@ -201,6 +201,16 @@ static uint32_t crc32_data(const uint8_t *data, uint32_t length)
   return crc32_update(0xFFFFFFFFU, data, length) ^ 0xFFFFFFFFU;
 }
 
+static uint32_t device_id(void)
+{
+  uint32_t uid[3];
+
+  uid[0] = *(volatile uint32_t *)UID_BASE;
+  uid[1] = *(volatile uint32_t *)(UID_BASE + 4U);
+  uid[2] = *(volatile uint32_t *)(UID_BASE + 8U);
+  return crc32_data((const uint8_t *)uid, sizeof(uid));
+}
+
 /* 从串口接收并校验一帧 IAP 命令。
  * first_byte_timeout 控制等待帧头第一个字节的时间：
  * - 上电初期使用短超时，用于决定是否进入 APP；
@@ -401,7 +411,7 @@ static uint8_t metadata_begin(uint32_t size, uint32_t crc, uint32_t version)
   AppMetadata metadata;
 
   metadata.magic = BL_METADATA_MAGIC;
-  metadata.target = BOOTLOADER_TARGET_ID;
+  metadata.target = device_id();
   metadata.version = version;
   metadata.size = size;
   metadata.image_crc = crc;
@@ -469,7 +479,7 @@ static uint8_t app_is_valid(void)
     return 1U;
   }
   if ((metadata->magic != BL_METADATA_MAGIC) ||
-      (metadata->target != BOOTLOADER_TARGET_ID) ||
+      (metadata->target != device_id()) ||
       (metadata->status != BL_STATUS_VALID) ||
       (metadata->size < 8U) || (metadata->size > BOOTLOADER_APP_CAPACITY) ||
       (metadata->record_crc != crc32_data((const uint8_t *)metadata,
@@ -554,7 +564,7 @@ static void send_info(uint8_t sequence)
   payload[1] = IAP_PROTOCOL_MAJOR;
   payload[2] = IAP_PROTOCOL_MINOR;
   payload[3] = app_is_valid();
-  write_u32_le(&payload[4], BOOTLOADER_TARGET_ID);
+  write_u32_le(&payload[4], device_id());
   write_u16_le(&payload[8], BL_HARDWARE_VERSION);
   write_u32_le(&payload[10], BOOTLOADER_VERSION);
   write_u32_le(&payload[14], metadata->version);
@@ -592,7 +602,7 @@ static void handle_start(const IapPacket *packet)
   crc = read_u32_le(&packet->payload[16]);
   chunk_size = read_u16_le(&packet->payload[20]);
 
-  if ((target != BOOTLOADER_TARGET_ID) ||
+  if ((target != device_id()) ||
       (BL_HARDWARE_VERSION < hw_min) || (BL_HARDWARE_VERSION > hw_max))
   {
     send_nack(packet->command, packet->sequence, IAP_ERR_TARGET_MISMATCH, 0U);
@@ -803,7 +813,9 @@ static void process_packet(const IapPacket *packet)
  * 典型流程：
  * 1. 初始化串口上下文和指示灯。
  * 2. 如果 APP 没有请求升级且 APP 有效，则短暂等待主机查询；
- *    若超时，直接跳转 APP。
+ *    窗口内只认合法的 IAP 设备信息查询（0x10）作为进入升级模式的信号，
+ *    其它帧（主机业务轮询、串口干扰、CRC 错误帧）一律忽略并继续等待，
+ *    超时后直接跳转 APP，避免主机轮询帧把设备永久截留在 Bootloader。
  * 3. 一旦进入 Bootloader 模式，就永久等待主机 IAP 命令。
  */
 void Bootloader_Run(UART_HandleTypeDef *huart)
@@ -819,14 +831,30 @@ void Bootloader_Run(UART_HandleTypeDef *huart)
 
   if ((consume_upgrade_request() == 0U) && (app_is_valid() != 0U))
   {
-    error = receive_packet(&packet, BL_START_TIMEOUT_MS);
-    if (error == BL_ERROR_TIMEOUT)
+    uint32_t window_start = HAL_GetTick();
+
+    for (;;)
     {
-      jump_to_app();
-    }
-    if (error == IAP_STATUS_OK)
-    {
-      process_packet(&packet);
+      uint32_t elapsed = HAL_GetTick() - window_start;
+      uint32_t remaining;
+
+      if (elapsed >= BL_START_TIMEOUT_MS)
+      {
+        jump_to_app();
+      }
+      remaining = BL_START_TIMEOUT_MS - elapsed;
+      error = receive_packet(&packet, remaining);
+      if (error == BL_ERROR_TIMEOUT)
+      {
+        jump_to_app();
+      }
+      /* 只有合法的 IAP 查询帧才说明主机真的要升级；
+       * 业务轮询帧或坏帧都忽略，继续等到超时跳 APP。 */
+      if ((error == IAP_STATUS_OK) && (packet.command == IAP_CMD_QUERY_INFO))
+      {
+        process_packet(&packet);
+        break;
+      }
     }
   }
 

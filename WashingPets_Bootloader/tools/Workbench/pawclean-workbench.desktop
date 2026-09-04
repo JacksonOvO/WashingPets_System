@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=PawClean Workbench
+GenericName=Pet Washing Machine Controller
+Comment=Control and monitor the PawClean pet washing machine
+Exec=/home/jackson/WashingPets/WashingPets_System/WashingPets_Bootloader/tools/Workbench/run_workbench.sh
+Icon=/home/jackson/WashingPets/WashingPets_System/WashingPets_Bootloader/tools/Workbench/pawclean-app-icon.png
+Terminal=false
+Categories=Development;Engineering;
+Keywords=pet;washing;machine;workbench;serial;
+StartupNotify=true

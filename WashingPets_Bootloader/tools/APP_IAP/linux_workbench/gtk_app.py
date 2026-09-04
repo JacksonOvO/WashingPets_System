@@ -41,12 +41,15 @@ class WorkbenchWindow(Gtk.Window):
         self.output_states = {}
         self.io_preview_rows = {}
         self.param_entries = {}
+        self.param_dirty_keys = set()
+        self.updating_params = False
         self.log_mark = None
-        self.last_log_text = ""
+        self.log_lines = []
         self.last_io_signature = None
         self.last_samples_signature = None
         self.chart_samples = []
         self.current_page = None
+        self.upgrade_running = False
         self.updating_outputs = False
         settings = Gtk.Settings.get_default()
         if settings:
@@ -79,8 +82,8 @@ class WorkbenchWindow(Gtk.Window):
 
         self.stack = Gtk.Stack()
         self.stack.set_transition_type(Gtk.StackTransitionType.NONE)
-        self.stack.set_hhomogeneous(True)
-        self.stack.set_vhomogeneous(True)
+        self.stack.set_hhomogeneous(False)
+        self.stack.set_vhomogeneous(False)
 
         nav_items = [
             ("main", "总览与交互"),
@@ -131,6 +134,7 @@ class WorkbenchWindow(Gtk.Window):
 
     def build_main_page(self):
         page = page_box()
+        page.pack_start(self.fault_panel(), False, False, 0)
         top = ResponsiveGrid(min_child_width=520, max_columns=2, column_spacing=14, row_spacing=14)
         page.pack_start(top, False, False, 0)
         top.add_item(self.status_panel())
@@ -143,6 +147,33 @@ class WorkbenchWindow(Gtk.Window):
         bottom.add_item(self.io_preview_panel(), expand=True)
         page.pack_start(bottom, True, True, 0)
         return page
+
+    def fault_panel(self):
+        panel = card("故障信息")
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        self.fault_code_label = Gtk.Label(label="0x0000", xalign=0)
+        self.fault_code_label.get_style_context().add_class("fault-code")
+        row.pack_start(self.fault_code_label, False, False, 0)
+        self.fault_name_label = Gtk.Label(label="无故障", xalign=0)
+        self.fault_name_label.get_style_context().add_class("fault-name")
+        row.pack_start(self.fault_name_label, False, False, 0)
+        panel.pack_start(row, False, False, 0)
+        self.fault_meta_label = Gtk.Label(label="", xalign=0)
+        self.fault_meta_label.get_style_context().add_class("card-meta")
+        panel.pack_start(self.fault_meta_label, False, False, 0)
+        # 故障报警历史：设备每次上报 A4 事件追加一条，展示本次会话全部报警记录。
+        history_title = Gtk.Label(label="故障报警历史", xalign=0)
+        history_title.get_style_context().add_class("card-meta")
+        panel.pack_start(history_title, False, False, 4)
+        self.fault_alarm_buffer = Gtk.TextBuffer()
+        self.fault_alarm_view = Gtk.TextView(buffer=self.fault_alarm_buffer)
+        self.fault_alarm_view.set_editable(False)
+        self.fault_alarm_view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
+        alarm_scroll = Gtk.ScrolledWindow()
+        alarm_scroll.set_min_content_height(110)
+        alarm_scroll.add(self.fault_alarm_view)
+        panel.pack_start(alarm_scroll, True, True, 0)
+        return panel
 
     def status_panel(self):
         panel = card("APP 状态", expand=False)
@@ -165,6 +196,9 @@ class WorkbenchWindow(Gtk.Window):
             box, value = metric_box(name)
             self.telemetry_labels[name] = value
             grid.add_item(box)
+        self.process_time_label = Gtk.Label(label="流程剩余 --", xalign=0)
+        self.process_time_label.get_style_context().add_class("hint")
+        panel.pack_start(self.process_time_label, False, False, 6)
         return panel
 
     def flow_panel(self):
@@ -174,6 +208,10 @@ class WorkbenchWindow(Gtk.Window):
         self.pending_label.get_style_context().add_class("pending")
         self.pending_label.set_no_show_all(True)
         panel.pack_start(self.pending_label, False, False, 0)
+        self.nack_label = Gtk.Label(label="", xalign=0)
+        self.nack_label.get_style_context().add_class("nack")
+        self.nack_label.set_no_show_all(True)
+        panel.pack_start(self.nack_label, False, False, 0)
 
         grid = ResponsiveGrid(min_child_width=320, max_columns=3, column_spacing=12, row_spacing=12)
         panel.pack_start(grid, False, False, 0)
@@ -246,6 +284,9 @@ class WorkbenchWindow(Gtk.Window):
             column_spacing=8,
             row_spacing=6,
         )
+        self.io_status_label = Gtk.Label(label="未收到 IO 状态", xalign=0)
+        self.io_status_label.get_style_context().add_class("card-meta")
+        panel.pack_start(self.io_status_label, False, False, 0)
         self.io_preview_grid.set_margin_end(4)
         self.io_preview_grid.set_margin_bottom(4)
         for name in core.INPUT_NAMES + core.OUTPUT_NAMES:
@@ -279,7 +320,8 @@ class WorkbenchWindow(Gtk.Window):
         row.pack_start(self.firmware_entry, True, True, 0)
         row.pack_start(button("浏览", self.browse_firmware), False, False, 0)
         row.pack_start(button("查询设备", self.query_device), False, False, 0)
-        row.pack_start(button("开始升级", self.upgrade, "start"), False, False, 0)
+        self.upgrade_button = button("开始升级", self.upgrade, "start")
+        row.pack_start(self.upgrade_button, False, False, 0)
         panel.pack_start(row, False, False, 0)
         self.upgrade_status = Gtk.Label(label="就绪", xalign=0)
         self.upgrade_status.get_style_context().add_class("status-line")
@@ -311,6 +353,7 @@ class WorkbenchWindow(Gtk.Window):
             label.set_ellipsize(Pango.EllipsizeMode.END)
             entry = Gtk.Entry(text="0")
             entry.set_hexpand(True)
+            entry.connect("changed", self.param_entry_changed, field["key"])
             self.param_entries[field["key"]] = entry
             item.pack_start(label, False, False, 0)
             item.pack_start(entry, False, False, 0)
@@ -329,6 +372,9 @@ class WorkbenchWindow(Gtk.Window):
         self.rs485_entry = Gtk.Entry(text="0")
         self.rs485_entry.set_width_chars(8)
         self.actuator_check = Gtk.CheckButton(label="GPIO执行器(泵仍485)")
+        self.actuator_check.set_tooltip_text("勾选=风机/加热走GPIO输出，泵仍走485；取消=全部执行器走485(设备默认)")
+        self.actuator_check.connect("toggled", self.actuator_mode_changed)
+        self.updating_actuator = False
         row.add_item(self.rs485_combo, expand=True)
         row.add_item(labeled_inline("数值", self.rs485_entry), expand=True)
         row.add_item(self.actuator_check, expand=True)
@@ -345,6 +391,9 @@ class WorkbenchWindow(Gtk.Window):
         sub = Gtk.Label(label="点击滑动开关下发手动输出命令", xalign=0)
         sub.get_style_context().add_class("hint")
         output_panel.pack_start(sub, False, False, 0)
+        self.io_page_status_label = Gtk.Label(label="未收到 IO 状态", xalign=0)
+        self.io_page_status_label.get_style_context().add_class("card-meta")
+        output_panel.pack_start(self.io_page_status_label, False, False, 0)
         scroll = Gtk.ScrolledWindow()
         self.output_grid = ResponsiveGrid(min_child_width=270, max_columns=4, column_spacing=8, row_spacing=8)
         for i, name in enumerate(core.OUTPUT_NAMES):
@@ -401,6 +450,24 @@ class WorkbenchWindow(Gtk.Window):
         outer.add_item(action_group)
         panel.pack_start(outer, False, False, 0)
         page.pack_start(panel, False, False, 0)
+
+        selftest_panel = card("快速/深度自检", expand=False)
+        selftest_row = ResponsiveGrid(min_child_width=160, max_columns=4, column_spacing=8, row_spacing=8)
+        selftest_row.add_item(button("快速自检", lambda *_: self.start_self_test(0), "start"), expand=True)
+        selftest_row.add_item(button("深度自检", lambda *_: self.start_self_test(1), "start"), expand=True)
+        selftest_row.add_item(button("安全停止自检", self.stop_self_test, "stop"), expand=True)
+        selftest_hint = Gtk.Label(label="自检需在自动模式空闲、无急停、门关闭、双光幕未触发时启动，工作台会自动先切自动模式", xalign=0)
+        selftest_hint.get_style_context().add_class("hint")
+        selftest_row.add_item(selftest_hint, expand=True)
+        selftest_panel.pack_start(selftest_row, False, False, 0)
+        self.selftest_summary = Gtk.Label(label="未收到自检结果", xalign=0)
+        self.selftest_summary.get_style_context().add_class("hint")
+        selftest_panel.pack_start(self.selftest_summary, False, False, 8)
+        self.selftest_flow = Gtk.FlowBox()
+        self.selftest_flow.set_selection_mode(Gtk.SelectionMode.NONE)
+        self.selftest_flow.set_max_children_per_line(6)
+        selftest_panel.pack_start(self.selftest_flow, False, False, 0)
+        page.pack_start(selftest_panel, False, False, 0)
 
         chart_panel = card("测试曲线")
         self.chart_summary = Gtk.Label(label="舱内温湿度曲线 · 30秒/点", xalign=0)
@@ -472,6 +539,7 @@ class WorkbenchWindow(Gtk.Window):
         combobox button { background: #0f141a; color: #f2f7fb; border-color: #334252; }
         checkbutton { color: #c8d3df; }
         .pending { color: #ffd08a; margin-bottom: 6px; }
+        .nack { color: #ff8a80; font-weight: 700; margin-bottom: 6px; }
         .hint { color: #8d9aaa; }
         .param-item, .output-item { background: #19232e; border: 1px solid #2c3a48; border-radius: 5px; padding: 9px 10px; }
         .param-item { min-height: 66px; }
@@ -490,6 +558,12 @@ class WorkbenchWindow(Gtk.Window):
         list, row { background: #151d26; color: #d9e2ec; }
         .dot-on { color: #34c26d; font-weight: 800; }
         .dot-off { color: #526273; }
+        .fault-code { font-size: 26px; font-weight: 800; color: #9fb0c3; }
+        .fault-code.fault-active { color: #ff6b6b; }
+        .selftest-pass { background: #173825; color: #93e4a9; border: 1px solid #2b7544; border-radius: 4px; padding: 4px 10px; margin: 3px; }
+        .selftest-fail { background: #462421; color: #ffaaa2; border: 1px solid #8a4039; border-radius: 4px; padding: 4px 10px; margin: 3px; }
+        .fault-name { font-size: 15px; font-weight: 700; color: #d9e2ec; }
+        .fault-bits { color: #ffd08a; font-size: 12px; }
         """
         provider = Gtk.CssProvider()
         provider.load_from_data(css)
@@ -537,7 +611,16 @@ class WorkbenchWindow(Gtk.Window):
             elif action == "query":
                 self.state.poll_once()
             elif action == "process":
-                self.state.send(core.CMD_PROCESS, core.process_payload(int(kwargs["value"]), int(kwargs.get("param", 0))))
+                value = int(kwargs["value"])
+                param = int(kwargs.get("param", 0))
+                if value == 5:
+                    # 单阶段测试仅手动模式接受，设备不代为切换模式，这里先做本地预检。
+                    if not self._check_stage_test_mode():
+                        return
+                if value in (1, 5, 6):
+                    threading.Thread(target=self._process_worker, args=(value, param), daemon=True).start()
+                else:
+                    self.state.send(core.CMD_PROCESS, core.process_payload(value, param))
             elif action == "interaction":
                 pending = self.state.pending_interaction
                 request_id = pending["id"] if pending else int(time.time()) & 0xFFFFFFFF
@@ -554,11 +637,29 @@ class WorkbenchWindow(Gtk.Window):
     def stage_test(self, *_):
         self.send_action("process", value=5, param=self.stage_combo.get_active())
 
+    def _process_worker(self, action, param):
+        try:
+            # 完整流程/自清洁需要在 AUTO 空闲层，先切模式并等待应答；
+            # 单阶段测试仅手动模式接受，由用户自己先切手动，这里直接发命令由设备把关。
+            if action in (1, 6):
+                self.state.set_mode_wait(2)
+            self.state.send(core.CMD_PROCESS, core.process_payload(action, param))
+        except Exception as exc:
+            GLib.idle_add(self.error, str(exc))
+
     def select_recipe(self, *_):
         self.send_action("interaction", type=6, value=self.recipe_combo.get_active())
 
+    def param_entry_changed(self, entry, key):
+        if self.updating_params:
+            return
+        self.param_dirty_keys.add(key)
+        with self.state.lock:
+            self.state.parameters[key] = entry.get_text()
+
     def read_params(self, *_):
         try:
+            self.param_dirty_keys.clear()
             self.state.request_param(self.param_recipe_combo.get_active())
         except Exception as exc:
             self.error(str(exc))
@@ -591,11 +692,22 @@ class WorkbenchWindow(Gtk.Window):
         except Exception as exc:
             self.error(str(exc))
 
+    def actuator_mode_changed(self, checkbox, *_):
+        if self.updating_actuator:
+            return
+        # 勾选=GPIO执行器(泵仍485)=mode 0；取消=全部走485=mode 1(设备默认)
+        mode = 0 if checkbox.get_active() else 1
+        try:
+            self.state.send(core.CMD_SET_ACTUATOR_MODE, core.u16_payload(mode))
+        except Exception as exc:
+            self.error(str(exc))
+
     def output_changed(self, switch, _param, output_id):
         if self.updating_outputs:
             return
         try:
-            payload = core.struct.pack("<HHI", output_id, 1 if switch.get_active() else 0, 0)
+            # 协议 15.1：<u16点号, u8状态, u8保留, u8保留, u8保留>，禁止用<HHI(会多写1字节)。
+            payload = core.struct.pack("<HBBI", output_id, 1 if switch.get_active() else 0, 0, 0)
             self.state.send(core.CMD_MANUAL_OUTPUT, payload)
         except Exception as exc:
             self.error(str(exc))
@@ -629,6 +741,10 @@ class WorkbenchWindow(Gtk.Window):
         if not port:
             self.error("请选择串口")
             return
+        if self.upgrade_running:
+            return
+        self.upgrade_running = True
+        self.upgrade_button.set_sensitive(False)
         args = (port, self.firmware_entry.get_text(), self.version_entry.get_text())
         self.upgrade_status.set_text("升级任务已开始，请看日志")
         threading.Thread(target=self._upgrade_worker, args=args, daemon=True).start()
@@ -636,35 +752,87 @@ class WorkbenchWindow(Gtk.Window):
     def _upgrade_worker(self, port, firmware, version):
         try:
             core.upgrade_iap(port, firmware, version)
-            GLib.idle_add(self.upgrade_status.set_text, "升级完成")
+            GLib.idle_add(self.finish_upgrade, "升级完成")
         except Exception as exc:
-            GLib.idle_add(self.upgrade_status.set_text, "升级失败: " + str(exc))
+            core.STATE.add_log("升级失败: " + str(exc))
+            GLib.idle_add(self.finish_upgrade, "升级失败: " + str(exc))
+
+    def finish_upgrade(self, text):
+        self.upgrade_running = False
+        if hasattr(self, "upgrade_button"):
+            self.upgrade_button.set_sensitive(True)
+        self.upgrade_status.set_text(text)
+        return False
+
+    def _check_stage_test_mode(self):
+        # 单阶段测试仅手动模式接受，设备不代为切换模式。预检不通过返回 False。
+        with self.state.lock:
+            mode = self.state.status.get("work_mode")
+        if mode is not None and mode != 1:
+            self.error("单阶段测试只能在手动模式下触发，请先在总览页点「手动」切换模式")
+            return False
+        return True
 
     def start_test(self, *_):
         try:
+            # 先做模式预检，不通过则不开始记录，避免出现“在记录但流程没跑起来”。
+            if not self._check_stage_test_mode():
+                return
+            stage = self.test_stage.get_active()
             with self.state.lock:
                 self.state.samples.clear()
                 self.state.test_running = True
                 self.state.test_started_at = time.time()
                 self.state.last_sample_at = 0
                 self.state.sample_interval = max(1, min(3600, float(self.test_interval.get_text())))
-            self.state.send(core.CMD_PROCESS, core.process_payload(5, self.test_stage.get_active()))
+            self.send_action("process", value=5, param=stage)
         except Exception as exc:
             self.error(str(exc))
 
     def stop_test(self, *_):
         try:
             self.state.send(core.CMD_PROCESS, core.process_payload(4, 0))
-            core.save_samples()
+            csv_path = core.save_samples()
             with self.state.lock:
                 self.state.test_running = False
+            if csv_path:
+                png_path = self.save_chart_png()
+                self.test_status.set_text(f"已保存到 {csv_path.parent}：{csv_path.name}、{png_path.name}")
         except Exception as exc:
             self.error(str(exc))
 
+    def start_self_test(self, mode):
+        try:
+            # 自检要求自动模式空闲，工作台先切自动模式并等待应答；被拒会抛异常。
+            self.state.set_mode_wait(2)
+            self.state.send(core.CMD_PROCESS, core.process_payload(9, mode))
+        except Exception as exc:
+            self.error(str(exc))
+
+    def stop_self_test(self, *_):
+        try:
+            self.state.send(core.CMD_PROCESS, core.process_payload(4, 0))
+        except Exception as exc:
+            self.error(str(exc))
+
+    def save_chart_png(self):
+        alloc = self.chart_area.get_allocation()
+        width, height = max(640, alloc.width), max(360, alloc.height)
+        surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, width, height)
+        self._render_chart(cairo.Context(surface), width, height)
+        out_dir = core.desktop_dir() / "测试曲线"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        path = out_dir / (time.strftime("linux_workbench_%Y%m%d_%H%M%S") + ".png")
+        surface.write_to_png(str(path))
+        self.state.add_log("CHART SAVED: " + str(path))
+        return path
+
     def compat_poll(self):
-        if self.poll_check.get_active() and self.state.status["connected"]:
+        if self.state.status["connected"]:
             try:
-                self.state.poll_once()
+                self.state.send(core.CMD_QUERY_IO)
+                if self.poll_check.get_active():
+                    self.state.send(core.CMD_QUERY_STATUS)
             except Exception as exc:
                 self.state.add_log("POLL ERROR: " + str(exc))
         return True
@@ -685,6 +853,7 @@ class WorkbenchWindow(Gtk.Window):
             connection_style.remove_class("connected")
         set_text_if_changed(self.connect_button, "断开APP" if connected else "连接APP")
         if page == "main":
+            self.render_fault(snap.get("fault") or {}, snap.get("faultAlarms") or [])
             for key, label in self.metric_labels.items():
                 set_text_if_changed(label, str(snap["metrics"].get(key, "--")))
             set_text_if_changed(self.flag_label, "状态标志 " + str(snap["flags"]))
@@ -698,20 +867,75 @@ class WorkbenchWindow(Gtk.Window):
             pending_text = "" if not pending else f"等待交互：{pending['text']} request={pending['id']}"
             set_text_if_changed(self.pending_label, pending_text)
             self.pending_label.set_visible(bool(pending_text))
+            nack = snap.get("last_nack")
+            set_text_if_changed(self.nack_label, nack or "")
+            self.nack_label.set_visible(bool(nack))
+            pt = snap.get("process_time") or {}
+            if pt.get("total_remaining_s") is not None:
+                total_s = pt["total_remaining_s"]
+                stage_s = pt["stage_remaining_s"]
+                total = f"{int(total_s // 60)}分{int(total_s % 60)}秒"
+                stage = f"{int(stage_s // 60)}分{int(stage_s % 60)}秒" if stage_s is not None else "--"
+                set_text_if_changed(self.process_time_label, f"流程剩余 {total} · 当前段剩余 {stage}")
+            else:
+                set_text_if_changed(self.process_time_label, "流程剩余 --")
+            set_text_if_changed(self.io_status_label, snap.get("ioSummary", "未收到 IO 状态"))
             self.render_io(snap["io"], preview=True)
         elif page == "param":
-            set_text_if_changed(self.param_revision, f"参数版本 {snap['paramRevision'] or '--'}")
-            for key, value in snap["parameters"].items():
-                entry = self.param_entries.get(key)
-                if entry and not entry.has_focus() and entry.get_text() != str(value):
-                    entry.set_text(str(value))
+            suffix = " · 有未写入修改" if self.param_dirty_keys else ""
+            set_text_if_changed(self.param_revision, f"参数版本 {snap['paramRevision'] or '--'}{suffix}")
+            self.updating_params = True
+            try:
+                for key, value in snap["parameters"].items():
+                    entry = self.param_entries.get(key)
+                    if entry and key not in self.param_dirty_keys and entry.get_text() != str(value):
+                        entry.set_text(str(value))
+            finally:
+                self.updating_params = False
         elif page == "io":
+            set_text_if_changed(self.io_page_status_label, snap.get("ioSummary", "未收到 IO 状态"))
             self.render_io(snap["io"], outputs=True)
+            mode = snap.get("actuator_mode")
+            if mode is not None:
+                desired = (mode == 0)
+                self.updating_actuator = True
+                try:
+                    if self.actuator_check.get_active() != desired:
+                        self.actuator_check.set_active(desired)
+                finally:
+                    self.updating_actuator = False
         elif page == "upgrade":
             self.render_logs(snap["logs"])
         elif page == "test":
             self.render_samples(snap["samples"], snap["testRunning"])
+            self.render_self_test(snap.get("self_test"))
         return True
+
+    def render_fault(self, fault, alarms=None):
+        code = fault.get("primary_fault_code", 0)
+        active = bool(code)
+        if active:
+            set_text_if_changed(self.fault_code_label, fault.get("fault_code_text", "--"))
+            set_text_if_changed(self.fault_name_label, fault.get("fault_name", "--"))
+            set_text_if_changed(self.fault_meta_label,
+                                f"{fault.get('event_type_text', '')} · 等级 {fault.get('severity_text', '')} · event_id={fault.get('event_id', 0)}")
+        else:
+            set_text_if_changed(self.fault_code_label, "0x0000")
+            set_text_if_changed(self.fault_name_label, "无故障")
+            set_text_if_changed(self.fault_meta_label, "")
+        if alarms is not None and len(alarms) != getattr(self, "fault_alarm_count", -1):
+            self.fault_alarm_count = len(alarms)
+            self.fault_alarm_buffer.set_text("\n".join(alarms))
+            self.fault_alarm_view.scroll_to_iter(self.fault_alarm_buffer.get_end_iter(),
+                                                 0, False, 0, 0)
+        prev = getattr(self, "fault_active", None)
+        if prev != active:
+            self.fault_active = active
+            ctx = self.fault_code_label.get_style_context()
+            if active:
+                ctx.add_class("fault-active")
+            else:
+                ctx.remove_class("fault-active")
 
     def render_io(self, io, preview=False, outputs=False):
         if preview:
@@ -737,23 +961,54 @@ class WorkbenchWindow(Gtk.Window):
                 continue
             ctx = dot.get_style_context()
             if item.get("state"):
+                dot.set_text("●")
                 ctx.add_class("dot-on")
                 ctx.remove_class("dot-off")
             else:
+                dot.set_text("○")
                 ctx.add_class("dot-off")
                 ctx.remove_class("dot-on")
 
     def render_logs(self, logs):
-        text = "\n".join(logs)
-        if text != self.last_log_text:
-            self.last_log_text = text
-            self.log_buffer.set_text(text)
-            end_iter = self.log_buffer.get_end_iter()
-            if self.log_mark is None:
-                self.log_mark = self.log_buffer.create_mark("log-end", end_iter, False)
+        logs = list(logs)
+        if logs == self.log_lines:
+            return
+        old_logs = self.log_lines
+        reset_buffer = False
+        if len(logs) >= len(old_logs) and logs[:len(old_logs)] == old_logs:
+            new_logs = logs[len(old_logs):]
+        else:
+            overlap = 0
+            for count in range(min(len(old_logs), len(logs)), 0, -1):
+                if old_logs[-count:] == logs[:count]:
+                    overlap = count
+                    break
+            if overlap:
+                new_logs = logs[overlap:]
             else:
-                self.log_buffer.move_mark(self.log_mark, end_iter)
-            self.log_text_view.scroll_to_mark(self.log_mark, 0.0, True, 0.0, 1.0)
+                reset_buffer = True
+                new_logs = logs
+        if reset_buffer:
+            self.log_buffer.set_text("")
+            self.log_mark = None
+            self.log_lines = []
+        end_iter = self.log_buffer.get_end_iter()
+        for line in new_logs:
+            if self.log_buffer.get_char_count() > 0:
+                self.log_buffer.insert(end_iter, "\n")
+            self.log_buffer.insert(end_iter, line)
+        self.log_lines = self.log_lines + new_logs
+        if new_logs:
+            GLib.idle_add(self.scroll_logs_to_end)
+
+    def scroll_logs_to_end(self):
+        end_iter = self.log_buffer.get_end_iter()
+        if self.log_mark is None:
+            self.log_mark = self.log_buffer.create_mark("log-end", end_iter, False)
+        else:
+            self.log_buffer.move_mark(self.log_mark, end_iter)
+        self.log_text_view.scroll_to_mark(self.log_mark, 0.05, True, 0.0, 1.0)
+        return False
 
     def render_samples(self, samples, running):
         set_text_if_changed(self.test_status, ("测试中" if running else "未开始") + f"，已记录 {len(samples)} 个点")
@@ -768,13 +1023,34 @@ class WorkbenchWindow(Gtk.Window):
         if hasattr(self, "chart_summary"):
             set_text_if_changed(self.chart_summary, f"{selected_text}曲线 · {self.state.sample_interval:g}秒/点 · 单流程 {self.test_stage.get_active_text()}")
 
+    def render_self_test(self, result):
+        if not result:
+            return
+        set_text_if_changed(self.selftest_summary, result.get("summary", "自检结果"))
+        items = result.get("items", [])
+        sig = (result.get("result_id"), tuple((it["name"], it["passed"]) for it in items))
+        if sig == getattr(self, "selftest_signature", None):
+            return
+        self.selftest_signature = sig
+        for child in self.selftest_flow.get_children():
+            self.selftest_flow.remove(child)
+        for it in items:
+            chip = Gtk.Label(label=it["name"])
+            chip.set_tooltip_text(("通过" if it["passed"] else "失败") + "：" + it["name"])
+            chip.get_style_context().add_class("selftest-pass" if it["passed"] else "selftest-fail")
+            self.selftest_flow.add(chip)
+        self.selftest_flow.show_all()
+
     def queue_chart_redraw(self):
         if hasattr(self, "chart_area"):
             self.chart_area.queue_draw()
 
     def draw_chart(self, area, cr):
         alloc = area.get_allocation()
-        width, height = max(1, alloc.width), max(1, alloc.height)
+        self._render_chart(cr, max(1, alloc.width), max(1, alloc.height))
+        return False
+
+    def _render_chart(self, cr, width, height):
         cr.set_source_rgb(0.06, 0.08, 0.11)
         cr.paint()
         left, top, right, bottom = 58, 24, 24, 38
@@ -979,7 +1255,7 @@ class ResponsiveGrid(Gtk.Grid):
         self.set_hexpand(True)
         self.set_vexpand(False)
         self.set_valign(Gtk.Align.START)
-        self.set_column_homogeneous(True)
+        self.set_column_homogeneous(False)
         self.connect("size-allocate", self._on_size_allocate)
 
     def add_item(self, widget, expand=True):

@@ -6,6 +6,7 @@
 #include "task_clean.h"
 #include "task_comm485.h"
 #include "task_output.h"
+#include "task_self_test.h"
 
 #include <stddef.h>
 #include <string.h>
@@ -13,7 +14,7 @@
 #define APP_PARAM_SAVE_DELAY_MS 1000U
 #define APP_RECIPE_MAX_TIME_MS  86400000U
 
-_Static_assert(sizeof(AppRecipe_t) == 68U,
+_Static_assert(sizeof(AppRecipe_t) == 84U,
                "AppRecipe_t layout changed; update host parameter protocol");
 
 /*
@@ -32,7 +33,41 @@ static volatile uint32_t param_change_counter;
 static uint32_t save_request_tick;
 
 #define APP_PARAM_LEGACY_V4             0x0004U
+#define APP_PARAM_LEGACY_V5             0x0005U
+#define APP_PARAM_LEGACY_V6             0x0006U
 #define APP_PARAM_LEGACY_RECIPE_COUNT   4U
+
+typedef struct
+{
+  int16_t tank_target_temp_x10;
+  uint16_t tank_temp_tolerance_x10;
+  uint16_t pipe_temp_tolerance_x10;
+  uint8_t spray_pressure_level;
+  uint8_t bath_pressure_level;
+  uint8_t clean_pressure_level;
+  uint8_t dry_fan_percent;
+  int16_t dry_target_cabin_temp_x10;
+  uint32_t spray_time_ms;
+  uint32_t spray_on_time_ms;
+  uint32_t spray_pause_time_ms;
+  uint32_t bath_time_ms;
+  uint32_t bath_on_time_ms;
+  uint32_t bath_pause_time_ms;
+  uint32_t liquid_soak_time_ms;
+  uint32_t clean_time_ms;
+  uint32_t dry_time_ms;
+  uint32_t self_clean_top_time_ms;
+  uint32_t self_clean_left_upper_time_ms;
+  uint32_t self_clean_left_middle_time_ms;
+  uint32_t self_clean_rear_time_ms;
+  uint32_t self_clean_dry_time_ms;
+} AppRecipeLegacyV6_t;
+
+_Static_assert(sizeof(AppRecipeLegacyV6_t) == 68U,
+               "legacy recipe layout must match V6 protocol");
+_Static_assert(offsetof(AppRecipe_t, self_clean_liquid_pressure_x10) ==
+               sizeof(AppRecipeLegacyV6_t),
+               "new recipe fields must stay appended for migration");
 
 typedef struct
 {
@@ -47,9 +82,44 @@ typedef struct
   uint32_t clean_period_ms;
   uint8_t active_recipe;
   uint8_t reserved0[3];
-  AppRecipe_t recipes[APP_PARAM_LEGACY_RECIPE_COUNT];
+  AppRecipeLegacyV6_t recipes[APP_PARAM_LEGACY_RECIPE_COUNT];
   uint8_t reserved[16];
 } AppParamLegacyV4_t;
+
+typedef struct
+{
+  uint32_t magic;
+  uint16_t version;
+  uint16_t length;
+  uint32_t crc32;
+  uint8_t default_percent;
+  uint8_t thyristor_station;
+  uint16_t pwm_frequency;
+  uint32_t auto_period_ms;
+  uint32_t clean_period_ms;
+  uint8_t active_recipe;
+  uint8_t reserved0[3];
+  AppRecipeLegacyV6_t recipes[APP_RECIPE_COUNT];
+  uint8_t reserved[16];
+} AppParamLegacyV5_t;
+
+typedef struct
+{
+  uint32_t magic;
+  uint16_t version;
+  uint16_t length;
+  uint32_t crc32;
+  uint8_t default_percent;
+  uint8_t thyristor_station;
+  uint16_t pwm_frequency;
+  uint32_t auto_period_ms;
+  uint32_t clean_period_ms;
+  uint8_t active_recipe;
+  uint8_t reserved0[3];
+  AppRecipeLegacyV6_t recipes[APP_RECIPE_COUNT];
+  AppSelfTestConfig_t self_test;
+  uint8_t reserved[16];
+} AppParamLegacyV6_t;
 
 static uint32_t read_u32_le(const uint8_t *data)
 {
@@ -102,6 +172,42 @@ static uint32_t legacy_v4_crc32(const AppParamLegacyV4_t *param)
   return crc32_update(0xFFFFFFFFU, start, length) ^ 0xFFFFFFFFU;
 }
 
+static uint32_t legacy_v5_crc32(const AppParamLegacyV5_t *param)
+{
+  const uint8_t *start = (const uint8_t *)&param->default_percent;
+  uint32_t length = (uint32_t)sizeof(AppParamLegacyV5_t) -
+                    (uint32_t)offsetof(AppParamLegacyV5_t, default_percent);
+
+  return crc32_update(0xFFFFFFFFU, start, length) ^ 0xFFFFFFFFU;
+}
+
+static uint32_t legacy_v6_crc32(const AppParamLegacyV6_t *param)
+{
+  const uint8_t *start = (const uint8_t *)&param->default_percent;
+  uint32_t length = (uint32_t)sizeof(AppParamLegacyV6_t) -
+                    (uint32_t)offsetof(AppParamLegacyV6_t, default_percent);
+
+  return crc32_update(0xFFFFFFFFU, start, length) ^ 0xFFFFFFFFU;
+}
+
+static void fill_self_clean_recipe_defaults(AppRecipe_t *recipe)
+{
+  recipe->self_clean_liquid_pressure_x10 = 40U;
+  recipe->self_clean_rinse_pressure_x10 = 60U;
+  recipe->self_clean_reserved[0] = 0U;
+  recipe->self_clean_reserved[1] = 0U;
+  recipe->self_clean_liquid_spray_time_ms = 15000U;
+  recipe->self_clean_disinfect_spray_time_ms = 15000U;
+  recipe->self_clean_soak_time_ms = 5000U;
+}
+
+static void copy_legacy_recipe(AppRecipe_t *dst, const AppRecipeLegacyV6_t *src)
+{
+  memset(dst, 0, sizeof(*dst));
+  memcpy(dst, src, sizeof(*src));
+  fill_self_clean_recipe_defaults(dst);
+}
+
 uint8_t AppParam_ValidateRecipe(const AppRecipe_t *recipe)
 {
   if (recipe == NULL)
@@ -120,7 +226,9 @@ uint8_t AppParam_ValidateRecipe(const AppRecipe_t *recipe)
   if ((recipe->spray_pressure_level > 100U) ||
       (recipe->bath_pressure_level > 100U) ||
       (recipe->clean_pressure_level > 100U) ||
-      (recipe->dry_fan_percent > 100U))
+      (recipe->dry_fan_percent > 100U) ||
+      (recipe->self_clean_liquid_pressure_x10 > 100U) ||
+      (recipe->self_clean_rinse_pressure_x10 > 100U))
   {
     return 0U;
   }
@@ -140,7 +248,10 @@ uint8_t AppParam_ValidateRecipe(const AppRecipe_t *recipe)
       RECIPE_TIME_TOO_LARGE(self_clean_left_upper_time_ms) ||
       RECIPE_TIME_TOO_LARGE(self_clean_left_middle_time_ms) ||
       RECIPE_TIME_TOO_LARGE(self_clean_rear_time_ms) ||
-      RECIPE_TIME_TOO_LARGE(self_clean_dry_time_ms))
+      RECIPE_TIME_TOO_LARGE(self_clean_dry_time_ms) ||
+      RECIPE_TIME_TOO_LARGE(self_clean_liquid_spray_time_ms) ||
+      RECIPE_TIME_TOO_LARGE(self_clean_disinfect_spray_time_ms) ||
+      RECIPE_TIME_TOO_LARGE(self_clean_soak_time_ms))
   {
     return 0U;
   }
@@ -148,10 +259,45 @@ uint8_t AppParam_ValidateRecipe(const AppRecipe_t *recipe)
   return 1U;
 }
 
+static uint8_t validate_legacy_recipe(const AppRecipeLegacyV6_t *recipe)
+{
+  AppRecipe_t current;
+
+  if (recipe == NULL)
+  {
+    return 0U;
+  }
+  copy_legacy_recipe(&current, recipe);
+  return AppParam_ValidateRecipe(&current);
+}
+
 /*
  * 装载完整默认参数和四套默认动物配方。
  * 仅在Flash无有效参数或参数结构版本变化时使用，不会在每次开机覆盖用户参数。
  */
+uint8_t AppParam_ValidateSelfTestConfig(const AppSelfTestConfig_t *config)
+{
+  if ((config == NULL) || (config->fast_fan_percent > 100U) ||
+      (config->deep_heater_percent > 100U) || (config->deep_fan_percent > 100U) ||
+      (config->valve_pressure_x10 > 100U) ||
+      (config->pressure_min_x10 > config->pressure_max_x10) ||
+      (config->pressure_max_x10 >= config->pressure_over_x10) ||
+      (config->pressure_over_x10 > 100U) ||
+      (config->proportional_valve_angle > 90U) ||
+      (config->hot_trend_samples == 0U) || (config->hot_trend_samples > 20U) ||
+      (config->heater_min_rise_x10 > 200U) ||
+      (config->heater_max_temp_x10 < 100) || (config->heater_max_temp_x10 > 800) ||
+      (config->communication_timeout_ms < 100U) ||
+      (config->heater_observe_ms < 1000U) ||
+      (config->pressure_stable_ms < 100U) ||
+      (config->pressure_timeout_ms < config->pressure_stable_ms) ||
+      (config->fill_timeout_ms < 1000U) || (config->hot_observe_ms < 1000U))
+  {
+    return 0U;
+  }
+  return 1U;
+}
+
 static void load_defaults(void)
 {
   uint8_t index;
@@ -167,6 +313,23 @@ static void load_defaults(void)
   app_param.auto_period_ms = 1000U;
   app_param.clean_period_ms = 60000U;
   app_param.active_recipe = (uint8_t)APP_RECIPE_SHORT_SMALL;
+  app_param.self_test.fast_fan_percent = 50U;
+  app_param.self_test.deep_heater_percent = 80U;
+  app_param.self_test.deep_fan_percent = 30U;
+  app_param.self_test.valve_pressure_x10 = 30U;
+  app_param.self_test.pressure_min_x10 = 28U;
+  app_param.self_test.pressure_max_x10 = 32U;
+  app_param.self_test.pressure_over_x10 = 40U;
+  app_param.self_test.proportional_valve_angle = 90U;
+  app_param.self_test.hot_trend_samples = 3U;
+  app_param.self_test.heater_min_rise_x10 = 5U;
+  app_param.self_test.heater_max_temp_x10 = 450;
+  app_param.self_test.communication_timeout_ms = 3000U;
+  app_param.self_test.heater_observe_ms = 45000U;
+  app_param.self_test.pressure_stable_ms = 2000U;
+  app_param.self_test.pressure_timeout_ms = 10000U;
+  app_param.self_test.fill_timeout_ms = 180000U;
+  app_param.self_test.hot_observe_ms = 60000U;
   write_u32_le(&app_param.reserved[0], 0U);
 
   /*
@@ -196,6 +359,7 @@ static void load_defaults(void)
   default_recipe.self_clean_left_middle_time_ms = 15000U;//自清洁左侧夹层清洁时间
   default_recipe.self_clean_rear_time_ms = 15000U;//自清洁后端清洁时间
   default_recipe.self_clean_dry_time_ms = 300000U;//自清洁烘干时间
+  fill_self_clean_recipe_defaults(&default_recipe);
   for (index = 0U; index < (uint8_t)APP_RECIPE_COUNT; ++index)
   {
     app_param.recipes[index] = default_recipe;
@@ -214,7 +378,8 @@ static uint8_t flash_param_is_valid(const AppParam_t *param)
       (param->default_percent > 100U) ||
       (param->thyristor_station == 0U) ||
       (param->thyristor_station > 247U) ||
-      (param->active_recipe >= (uint8_t)APP_RECIPE_COUNT))
+      (param->active_recipe >= (uint8_t)APP_RECIPE_COUNT) ||
+      (AppParam_ValidateSelfTestConfig(&param->self_test) == 0U))
   {
     return 0U;
   }
@@ -251,7 +416,7 @@ static uint8_t migrate_legacy_v4(const AppParamLegacyV4_t *legacy)
 
   for (index = 0U; index < APP_PARAM_LEGACY_RECIPE_COUNT; ++index)
   {
-    if (AppParam_ValidateRecipe(&legacy->recipes[index]) == 0U)
+    if (validate_legacy_recipe(&legacy->recipes[index]) == 0U)
     {
       return 0U;
     }
@@ -266,8 +431,84 @@ static uint8_t migrate_legacy_v4(const AppParamLegacyV4_t *legacy)
   app_param.active_recipe = legacy->active_recipe;
   for (index = 0U; index < APP_PARAM_LEGACY_RECIPE_COUNT; ++index)
   {
-    app_param.recipes[index] = legacy->recipes[index];
+    copy_legacy_recipe(&app_param.recipes[index], &legacy->recipes[index]);
   }
+  memcpy(app_param.reserved, legacy->reserved, sizeof(legacy->reserved));
+  app_param.crc32 = param_crc32(&app_param);
+  return 1U;
+}
+
+static uint8_t migrate_legacy_v5(const AppParamLegacyV5_t *legacy)
+{
+  uint8_t index;
+
+  if ((legacy->magic != APP_PARAM_MAGIC) || (legacy->version != APP_PARAM_LEGACY_V5) ||
+      (legacy->length != sizeof(AppParamLegacyV5_t)) ||
+      (legacy->crc32 != legacy_v5_crc32(legacy)) ||
+      (legacy->default_percent > 100U) || (legacy->thyristor_station == 0U) ||
+      (legacy->thyristor_station > 247U) ||
+      (legacy->active_recipe >= (uint8_t)APP_RECIPE_COUNT))
+  {
+    return 0U;
+  }
+  for (index = 0U; index < (uint8_t)APP_RECIPE_COUNT; ++index)
+  {
+    if (validate_legacy_recipe(&legacy->recipes[index]) == 0U)
+    {
+      return 0U;
+    }
+  }
+  load_defaults();
+  app_param.default_percent = legacy->default_percent;
+  app_param.thyristor_station = legacy->thyristor_station;
+  app_param.pwm_frequency = legacy->pwm_frequency;
+  app_param.auto_period_ms = legacy->auto_period_ms;
+  app_param.clean_period_ms = legacy->clean_period_ms;
+  app_param.active_recipe = legacy->active_recipe;
+  for (index = 0U; index < (uint8_t)APP_RECIPE_COUNT; ++index)
+  {
+    copy_legacy_recipe(&app_param.recipes[index], &legacy->recipes[index]);
+  }
+  memcpy(app_param.reserved, legacy->reserved, sizeof(legacy->reserved));
+  app_param.crc32 = param_crc32(&app_param);
+  return 1U;
+}
+
+static uint8_t migrate_legacy_v6(const AppParamLegacyV6_t *legacy)
+{
+  uint8_t index;
+
+  if ((legacy->magic != APP_PARAM_MAGIC) ||
+      (legacy->version != APP_PARAM_LEGACY_V6) ||
+      (legacy->length != sizeof(AppParamLegacyV6_t)) ||
+      (legacy->crc32 != legacy_v6_crc32(legacy)) ||
+      (legacy->default_percent > 100U) ||
+      (legacy->thyristor_station == 0U) ||
+      (legacy->thyristor_station > 247U) ||
+      (legacy->active_recipe >= (uint8_t)APP_RECIPE_COUNT) ||
+      (AppParam_ValidateSelfTestConfig(&legacy->self_test) == 0U))
+  {
+    return 0U;
+  }
+  for (index = 0U; index < (uint8_t)APP_RECIPE_COUNT; ++index)
+  {
+    if (validate_legacy_recipe(&legacy->recipes[index]) == 0U)
+    {
+      return 0U;
+    }
+  }
+  load_defaults();
+  app_param.default_percent = legacy->default_percent;
+  app_param.thyristor_station = legacy->thyristor_station;
+  app_param.pwm_frequency = legacy->pwm_frequency;
+  app_param.auto_period_ms = legacy->auto_period_ms;
+  app_param.clean_period_ms = legacy->clean_period_ms;
+  app_param.active_recipe = legacy->active_recipe;
+  for (index = 0U; index < (uint8_t)APP_RECIPE_COUNT; ++index)
+  {
+    copy_legacy_recipe(&app_param.recipes[index], &legacy->recipes[index]);
+  }
+  app_param.self_test = legacy->self_test;
   memcpy(app_param.reserved, legacy->reserved, sizeof(legacy->reserved));
   app_param.crc32 = param_crc32(&app_param);
   return 1U;
@@ -285,6 +526,14 @@ void AppParam_Init(void)
   if (flash_param_is_valid(flash_param) != 0U)
   {
     memcpy(&app_param, flash_param, sizeof(app_param));
+  }
+  else if (migrate_legacy_v6((const AppParamLegacyV6_t *)flash_param) != 0U)
+  {
+    AppParam_RequestSave();
+  }
+  else if (migrate_legacy_v5((const AppParamLegacyV5_t *)flash_param) != 0U)
+  {
+    AppParam_RequestSave();
   }
   else if (migrate_legacy_v4((const AppParamLegacyV4_t *)flash_param) != 0U)
   {
@@ -408,6 +657,7 @@ uint8_t AppParam_CanSaveNow(void)
    */
   if ((AutoProcess_IsRunning() != 0U) ||
       (TaskClean_IsRunning() != 0U) ||
+      (TaskSelfTest_IsRunning() != 0U) ||
       (AutoDevice_IsPaused() != 0U))
   {
     return 0U;
@@ -424,6 +674,7 @@ uint8_t AppParam_CanSaveNow(void)
 
   if ((AutoProcess_IsRunning() != 0U) ||
       (TaskClean_IsRunning() != 0U) ||
+      (TaskSelfTest_IsRunning() != 0U) ||
       (AutoDevice_IsPaused() != 0U) ||
       (TaskOutput_HasDangerousOutputActive() != 0U) ||
       (TaskComm485_GetLastBoosterPumpRunning() != 0U) ||
@@ -592,6 +843,21 @@ HAL_StatusTypeDef AppParam_SetRecipeDirect(AppRecipeId recipe_id,
     return HAL_ERROR;
   }
   app_param.recipes[recipe_id] = *recipe;
+  return HAL_OK;
+}
+
+const AppSelfTestConfig_t *AppParam_GetSelfTestConfig(void)
+{
+  return &app_param.self_test;
+}
+
+HAL_StatusTypeDef AppParam_SetSelfTestConfigDirect(const AppSelfTestConfig_t *config)
+{
+  if (AppParam_ValidateSelfTestConfig(config) == 0U)
+  {
+    return HAL_ERROR;
+  }
+  app_param.self_test = *config;
   return HAL_OK;
 }
 

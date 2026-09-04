@@ -19,7 +19,7 @@
 #define PARAM_FLASH_SIZE     0x20000U
 
 #define APP_PARAM_MAGIC      0x4150524DU  /* "APRM" */
-#define APP_PARAM_VERSION    0x0005U
+#define APP_PARAM_VERSION    0x0007U
 
 /* 四种基础动物工艺配方，由上位机按毛长和体型选择。 */
 typedef enum
@@ -60,7 +60,37 @@ typedef struct
   uint32_t self_clean_left_middle_time_ms; /* 自清洁左侧夹层清洁时间 */
   uint32_t self_clean_rear_time_ms;        /* 自清洁后端清洁时间 */
   uint32_t self_clean_dry_time_ms;         /* 自清洁烘干时间 */
+  uint8_t self_clean_liquid_pressure_x10;  /* 自清洁药液喷洒压力，单位0.1kg */
+  uint8_t self_clean_rinse_pressure_x10;   /* 自清洁清水冲洗压力，单位0.1kg */
+  uint8_t self_clean_reserved[2];          /* 对齐保留 */
+  uint32_t self_clean_liquid_spray_time_ms;      /* 自清洁清洁液喷洒时间 */
+  uint32_t self_clean_disinfect_spray_time_ms;   /* 自清洁消毒液喷洒时间 */
+  uint32_t self_clean_soak_time_ms;              /* 自清洁药液静置时间 */
 } AppRecipe_t;
+
+typedef struct
+{
+  uint8_t fast_fan_percent;
+  uint8_t deep_heater_percent;
+  uint8_t deep_fan_percent;
+  uint8_t valve_pressure_x10;
+  uint8_t pressure_min_x10;
+  uint8_t pressure_max_x10;
+  uint8_t pressure_over_x10;
+  uint8_t proportional_valve_angle;
+  uint8_t hot_trend_samples;
+  uint8_t reserved0[3];
+  uint16_t heater_min_rise_x10;
+  int16_t heater_max_temp_x10;
+  uint32_t communication_timeout_ms;
+  uint32_t heater_observe_ms;
+  uint32_t pressure_stable_ms;
+  uint32_t pressure_timeout_ms;
+  uint32_t fill_timeout_ms;
+  uint32_t hot_observe_ms;
+} AppSelfTestConfig_t;
+
+_Static_assert(sizeof(AppSelfTestConfig_t) == 40U, "self-test protocol size");
 
 typedef struct
 {
@@ -77,6 +107,7 @@ typedef struct
   uint8_t active_recipe;       /* 当前自动流程使用的AppRecipeId。 */
   uint8_t reserved0[3];
   AppRecipe_t recipes[APP_RECIPE_COUNT];
+  AppSelfTestConfig_t self_test;
   uint8_t reserved[16];
 } AppParam_t;
 
@@ -105,6 +136,9 @@ HAL_StatusTypeDef AppParam_SetRecipe(AppRecipeId recipe_id,
 HAL_StatusTypeDef AppParam_SetRecipeDirect(AppRecipeId recipe_id,
                                           const AppRecipe_t *recipe);
 uint8_t AppParam_ValidateRecipe(const AppRecipe_t *recipe);
+const AppSelfTestConfig_t *AppParam_GetSelfTestConfig(void);
+uint8_t AppParam_ValidateSelfTestConfig(const AppSelfTestConfig_t *config);
+HAL_StatusTypeDef AppParam_SetSelfTestConfigDirect(const AppSelfTestConfig_t *config);
 void AppParam_RestoreDefaults(void);
 
 #endif
