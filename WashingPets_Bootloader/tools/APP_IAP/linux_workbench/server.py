@@ -72,10 +72,10 @@ OUTPUT_NAMES = [
     "OUT11 淋浴阀下", "OUT12 淋浴阀后", "OUT13 沐浴液阀", "OUT14 芬香液阀", "OUT15 柔顺液阀",
     "OUT16 除螨液阀", "OUT17 护毛素阀", "OUT18 消毒液阀", "OUT19 紫外线灯", "OUT20 自清洁顶部阀",
     "OUT21 自清洁前侧上阀", "OUT22 自清洁前侧下阀", "OUT23 自清洁后端阀", "OUT24 旁通阀",
-    "OUT25 臭氧发生器", "OUT26 舱内照明", "OUT27 正门灯带", "OUT28 LOGO发光板", "OUT29 正门加热",
-    "OUT30 下门电动推杆", "OUT31 上门闭门器", "OUT32 上门电磁锁", "OUT33 下门电磁锁",
+    "OUT25 臭氧发生器", "OUT26 舱内照明", "OUT27 正门灯带", "OUT28 LOGO发光板", "OUT29 增压泵",
+    "OUT30 自动关门", "OUT31 闭门器停止", "OUT32 上门电磁锁", "OUT33 下门电磁锁",
     "OUT34 左电插锁", "OUT35 右电插锁", "OUT36 后电插锁1", "OUT37 后电插锁2",
-    "OUT38 下门灯板", "OUT39 热水器阀", "OUT40 主板电源控制",
+    "OUT38 自动开门", "OUT39 热水器阀", "OUT40 主板电源控制",
 ]
 
 STAGES = ["0 入舱准备", "1 入舱", "2 洗前准备", "3 冲洗", "4 沐浴", "5 清洗", "6 吹干", "7 出舱准备", "8 出舱"]
@@ -167,10 +167,10 @@ RECIPE_FIELDS = [
     {"key": "spraySec", "label": "冲洗总时间 (秒)", "offset": 12, "kind": "ms", "min": 0, "max": 86400},
     {"key": "sprayOnSec", "label": "冲洗出水时间 (秒)", "offset": 16, "kind": "ms", "min": 0, "max": 86400},
     {"key": "sprayPauseSec", "label": "冲洗暂停时间 (秒)", "offset": 20, "kind": "ms", "min": 0, "max": 86400},
-    {"key": "bathSec", "label": "沐浴总时间 (秒)", "offset": 24, "kind": "ms", "min": 0, "max": 86400},
+    {"key": "bathCycles", "label": "沐浴循环次数 (次)", "offset": 24, "kind": "u32", "min": 0, "max": 100},
     {"key": "bathOnSec", "label": "沐浴出水时间 (秒)", "offset": 28, "kind": "ms", "min": 0, "max": 86400},
     {"key": "bathPauseSec", "label": "沐浴暂停时间 (秒)", "offset": 32, "kind": "ms", "min": 0, "max": 86400},
-    {"key": "soakSec", "label": "洗剂浸润时间 (秒)", "offset": 36, "kind": "ms", "min": 0, "max": 86400},
+    {"key": "bathLiquidSec", "label": "沐浴加液时间 (秒)", "offset": 36, "kind": "ms", "min": 0, "max": 60},
     {"key": "cleanSec", "label": "清洗总时间 (秒)", "offset": 40, "kind": "ms", "min": 0, "max": 86400},
     {"key": "drySec", "label": "烘干时间 (秒)", "offset": 44, "kind": "ms", "min": 0, "max": 86400},
     {"key": "selfTopSec", "label": "自清洁顶部 (秒)", "offset": 48, "kind": "ms", "min": 0, "max": 86400},
@@ -641,7 +641,7 @@ class WorkbenchState:
         group = p[0]
         version = u16(p, 2)
         data_len = u16(p, 8)
-        if len(p) < 10 + RECIPE_PAYLOAD_LENGTH or group != 1 or version != 1 or data_len != RECIPE_PAYLOAD_LENGTH:
+        if len(p) < 10 + RECIPE_PAYLOAD_LENGTH or group != 1 or version != 3 or data_len != RECIPE_PAYLOAD_LENGTH:
             self.add_log(
                 f"参数响应不匹配: group={group}, version={version}, data_len={data_len}, "
                 f"expected={RECIPE_PAYLOAD_LENGTH}, frame_len={len(p)}"
@@ -659,6 +659,8 @@ class WorkbenchState:
                 value = p[offset] / 10.0
             elif kind == "u8":
                 value = p[offset]
+            elif kind == "u32":
+                value = u32(p, offset)
             else:
                 value = u32(p, offset) / 1000.0
             values[field["key"]] = value
@@ -744,10 +746,18 @@ class WorkbenchState:
             raise RuntimeError(f"切换模式被拒绝：{reason}")
 
     def build_param_payload(self, recipe_index, revision, values):
+        dose = float(values.get("bathLiquidSec", -1))
+        if not 0 <= dose <= 60:
+            raise ValueError("请先读取新版配方，沐浴加液时间必须为0到60秒")
+        cycles = float(values.get("bathCycles", -1))
+        if not cycles.is_integer() or not 0 <= cycles <= 100:
+            raise ValueError("请先读取新版配方，沐浴循环次数必须为0到100的整数")
+        if cycles and float(values.get("bathOnSec", 0)) <= 0:
+            raise ValueError("启用沐浴循环时，沐浴出水时间必须大于0")
         p = bytearray(10 + RECIPE_PAYLOAD_LENGTH)
         p[0] = 1
         p[1] = recipe_index & 0xFF
-        put_u16(p, 2, 1)
+        put_u16(p, 2, 3)
         put_u32(p, 4, revision)
         put_u16(p, 8, RECIPE_PAYLOAD_LENGTH)
         for field in RECIPE_FIELDS:
@@ -763,6 +773,8 @@ class WorkbenchState:
                 p[offset] = round(raw * 10) & 0xFF
             elif kind == "u8":
                 p[offset] = round(raw) & 0xFF
+            elif kind == "u32":
+                put_u32(p, offset, round(raw))
             else:
                 put_u32(p, offset, round(raw * 1000))
         return bytes(p)

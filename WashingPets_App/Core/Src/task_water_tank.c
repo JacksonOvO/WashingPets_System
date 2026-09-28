@@ -45,7 +45,10 @@
 #define WATER_TANK_VALVE_MOVE_STEP    3U
 #define WATER_TANK_VALVE_UNKNOWN    0xFFU
 #define WATER_TANK_HOT_DRAIN_MS    20000U
-#define WATER_TANK_HIGH_STOP_DELAY_MS 15000U
+#define WATER_TANK_WASH_MIX_TOL_X10 10
+#define WATER_TANK_WASH_ADJUST_MS 5000U
+#define WATER_TANK_MIX_STALE_MS 5000U
+#define WATER_TANK_WASH_INITIAL_ANGLE 37U
 #define WATER_TANK_TARGET_UNKNOWN  ((int16_t)-32768)
 
 typedef enum
@@ -78,7 +81,11 @@ static WaterTankState water_tank_state;
 static uint8_t water_tank_recirc_active;
 static uint32_t last_valve_adjust_tick;
 static uint32_t hot_drain_start_tick;
-static uint32_t high_level_reached_tick;
+static uint8_t wash_refill_active;
+static uint8_t wash_fill_running;
+static uint8_t wash_valve_angle;
+static uint32_t wash_adjust_tick;
+static uint32_t wash_sample_tick;
 static uint8_t hot_drain_active;
 static volatile uint8_t self_clean_prepare_requested;
 static int16_t last_recipe_target_x10 = WATER_TANK_TARGET_UNKNOWN;
@@ -108,20 +115,8 @@ static uint8_t tank_level_reached(AutoInputPoint point)
 
 static uint8_t tank_high_reached_after_delay(void)
 {
-  if (tank_level_reached(AUTO_INPUT_TANK_HIGH) == 0U)
-  {
-    high_level_reached_tick = 0U;
-    return 0U;
-  }
-
-  if (high_level_reached_tick == 0U)
-  {
-    high_level_reached_tick = HAL_GetTick();
-    return 0U;
-  }
-
-  return ((HAL_GetTick() - high_level_reached_tick) >=
-          WATER_TANK_HIGH_STOP_DELAY_MS) ? 1U : 0U;
+  /* One timer in the output task governs GPIO and proportional-valve cutoff. */
+  return TaskOutput_IsTankHighStopActive();
 }
 
 static int16_t recipe_tank_target_x10(const AppRecipe_t *recipe)
@@ -184,10 +179,16 @@ static uint8_t water_tank_should_yield_to_process(void)
   }
 
   stage = AutoProcess_GetCurrentStage();
-  return ((stage == (uint16_t)AUTO_PROCESS_STAGE_ENTRY_ENV) ||
-          (stage == (uint16_t)AUTO_PROCESS_STAGE_SPRAY) ||
-          (stage == (uint16_t)AUTO_PROCESS_STAGE_BATH) ||
-          (stage == (uint16_t)AUTO_PROCESS_STAGE_CLEAN)) ? 1U : 0U;
+  return stage == (uint16_t)AUTO_PROCESS_STAGE_ENTRY_ENV;
+}
+
+static uint8_t water_tank_is_washing(void)
+{
+  uint16_t stage = AutoProcess_GetCurrentStage();
+  return (AutoProcess_IsRunning() != 0U) &&
+         ((stage == AUTO_PROCESS_STAGE_SPRAY) ||
+          (stage == AUTO_PROCESS_STAGE_BATH) ||
+          (stage == AUTO_PROCESS_STAGE_CLEAN));
 }
 
 static const AppRecipe_t *water_tank_active_recipe(void)
@@ -330,11 +331,11 @@ static void request_valve_angle(uint8_t target, uint8_t force)
 
   /*
    * 自动流程安全联锁（防溢流）：TANK_HIGH 为反逻辑，0=已到高液位。
-   * 水箱到高液位后禁止继续打开混合比例阀（它也在向箱内补水）。
+   * 高液位持续10秒后禁止继续打开混合比例阀，与GPIO互锁共用计时。
    * 手动控制/自检路径不经过这里（联锁已从 TaskComm485_RequestSetProportionalValveAngle 移出）。
    */
   if ((command_angle != 0U) &&
-      (AutoDevice_ReadInput(AUTO_INPUT_TANK_HIGH) == 0U))
+      (tank_high_reached_after_delay() != 0U))
   {
     return;
   }
@@ -553,9 +554,117 @@ static void protect_booster_pump(void)
   }
 }
 
+static uint8_t mix_sensor_valid(const AutoSensorData *sensors)
+{
+  return (sensors->spare_temperature_valid != 0U) &&
+         ((HAL_GetTick() - sensors->spare_update_tick) <= WATER_TANK_MIX_STALE_MS);
+}
+
+/* During washing, only these three inlet actuators belong to the tank task. */
+static void wash_refill_off(void)
+{
+  (void)AutoDevice_SetOutput(AUTO_OUTPUT_TAP_WATER_VALVE, 0U);
+  (void)AutoDevice_SetOutput(AUTO_OUTPUT_STANDBY2_VALVE, 0U);
+  request_valve_angle(0U, 1U);
+  wash_fill_running = 0U;
+}
+
+static void refill_fault(AutoFaultCode fault)
+{
+  wash_refill_off();
+  AutoDevice_AllDangerousOutputsOff();
+  AutoDevice_SetStopRequested(1U);
+  AutoDevice_ReportFault(fault, AUTO_REPORT_SENSOR_FAULT);
+}
+
+static void process_wash_refill(const AppRecipe_t *recipe)
+{
+  AutoSensorData sensors = {0};
+  uint32_t now = HAL_GetTick();
+
+  water_tank_recirc_active = 0U;
+  hot_drain_active = 0U;
+  hot_drain_start_tick = 0U;
+  if (wash_refill_active == 0U)
+  {
+    uint8_t previous_angle = TaskComm485_GetLastProportionalValveAngle();
+    wash_refill_active = 1U;
+    wash_fill_running = 0U;
+    wash_valve_angle = (previous_angle > 0U && previous_angle < 90U) ?
+                       previous_angle : WATER_TANK_WASH_INITIAL_ANGLE;
+  }
+  if ((AutoDevice_GetSensorData(&sensors) == 0U) || (mix_sensor_valid(&sensors) == 0U))
+  {
+    refill_fault(AUTO_FAULT_SPARE_TEMP_SENSOR_INVALID);
+    return;
+  }
+  if (tank_high_reached_after_delay() != 0U)
+  {
+    wash_refill_off();
+    water_tank_state = WATER_TANK_STATE_IDLE;
+    return;
+  }
+
+  /* The output-level high-water cutoff may have reset the valve between ticks. */
+  if ((wash_fill_running != 0U) &&
+      (TaskComm485_GetLastProportionalValveAngle() != wash_valve_angle))
+  {
+    wash_fill_running = 0U;
+  }
+  if (wash_fill_running == 0U)
+  {
+    /* Wait for a successful 485 write before admitting hot water. */
+    if (TaskComm485_RequestSetProportionalValveAngle(wash_valve_angle) != HAL_OK)
+    {
+      refill_fault(AUTO_FAULT_OUTPUT_COMMAND_FAILED);
+      return;
+    }
+    if (TaskComm485_GetLastProportionalValveAngle() != wash_valve_angle)
+    {
+      (void)AutoDevice_SetOutput(AUTO_OUTPUT_TAP_WATER_VALVE, 0U);
+      (void)AutoDevice_SetOutput(AUTO_OUTPUT_STANDBY2_VALVE, 0U);
+      return;
+    }
+    current_valve_angle = wash_valve_angle;
+    wash_adjust_tick = now;
+    wash_sample_tick = sensors.spare_update_tick;
+    wash_fill_running = 1U;
+  }
+  else if (((now - wash_adjust_tick) >= WATER_TANK_WASH_ADJUST_MS) &&
+           (sensors.spare_update_tick != wash_sample_tick) &&
+           (TaskComm485_GetLastProportionalValveAngle() == wash_valve_angle))
+  {
+    int16_t angle = wash_valve_angle;
+    int16_t target = recipe_tank_target_x10(recipe);
+    if (sensors.spare_temperature_x10 > target + WATER_TANK_WASH_MIX_TOL_X10)
+      angle += WATER_TANK_VALVE_MOVE_STEP;
+    else if (sensors.spare_temperature_x10 < target - WATER_TANK_WASH_MIX_TOL_X10)
+      angle -= WATER_TANK_VALVE_MOVE_STEP;
+    uint8_t next_angle = clamp_angle(angle);
+    if ((next_angle != wash_valve_angle) &&
+        (TaskComm485_RequestSetProportionalValveAngle(next_angle) != HAL_OK))
+    {
+      refill_fault(AUTO_FAULT_OUTPUT_COMMAND_FAILED);
+      return;
+    }
+    wash_valve_angle = next_angle;
+    current_valve_angle = next_angle;
+    wash_adjust_tick = now;
+    wash_sample_tick = sensors.spare_update_tick;
+  }
+
+  if ((AutoDevice_SetOutput(AUTO_OUTPUT_TAP_WATER_VALVE, 1U) != HAL_OK) ||
+      (AutoDevice_SetOutput(AUTO_OUTPUT_STANDBY2_VALVE, 1U) != HAL_OK))
+  {
+    refill_fault(AUTO_FAULT_OUTPUT_COMMAND_FAILED);
+    return;
+  }
+  water_tank_state = WATER_TANK_STATE_HEATING;
+}
+
 static void process_water_tank(void)
 {
-  AutoSensorData sensors;
+  AutoSensorData sensors = {0};
   const AppRecipe_t *recipe = water_tank_active_recipe();
   AutoInputPoint target_level_point;
   uint8_t target_level_reached;
@@ -569,6 +678,12 @@ static void process_water_tank(void)
   int16_t recirc_stop_x10;
 
   uint8_t auto_mode = TaskOutput_IsAutoMode();
+
+  if ((auto_mode == 0U) || (water_tank_is_washing() == 0U))
+  {
+    wash_refill_active = 0U;
+    wash_fill_running = 0U;
+  }
 
   if (TaskSelfTest_IsRunning() != 0U)
   {
@@ -594,7 +709,6 @@ static void process_water_tank(void)
     water_tank_recirc_active = 0U;
     hot_drain_active = 0U;
     hot_drain_start_tick = 0U;
-    high_level_reached_tick = 0U;
     last_recipe_target_x10 = WATER_TANK_TARGET_UNKNOWN;
     water_tank_gpio_outputs_off();
     water_tank_log(WATER_TANK_LOG_NOT_AUTO, NULL);
@@ -607,28 +721,27 @@ static void process_water_tank(void)
     water_tank_recirc_active = 0U;
     hot_drain_active = 0U;
     hot_drain_start_tick = 0U;
-    high_level_reached_tick = 0U;
     last_recipe_target_x10 = WATER_TANK_TARGET_UNKNOWN;
     water_tank_outputs_off();
     water_tank_log(WATER_TANK_LOG_EMERGENCY, NULL);
     return;
   }
 
-  if (TaskComm485_GetInhibitReasons() != 0U)
+  if ((TaskComm485_GetInhibitReasons() != 0U) ||
+      (AutoDevice_IsPaused() != 0U) || (AutoDevice_IsStopRequested() != 0U) ||
+      (AutoDevice_GetFault() != AUTO_FAULT_NONE))
   {
     water_tank_state = WATER_TANK_STATE_IDLE;
     water_tank_recirc_active = 0U;
     hot_drain_active = 0U;
     hot_drain_start_tick = 0U;
-    high_level_reached_tick = 0U;
+    wash_fill_running = 0U;
     water_tank_outputs_off();
     return;
   }
 
   /*
-   * 入舱准备排管路水、冲洗、沐浴、清洗这些阶段会直接控制水泵和水路阀。
-   * 水箱后台此时必须让出输出控制权，不能再按恒温策略写泵/阀门，
-   * 否则会把流程步骤刚打开的增压泵或阀门关掉。
+   * 入舱准备独占水路；洗护阶段另走仅控制进水阀的并行补水分支。
    */
   if (water_tank_should_yield_to_process() != 0U)
   {
@@ -636,7 +749,6 @@ static void process_water_tank(void)
     water_tank_recirc_active = 0U;
     hot_drain_active = 0U;
     hot_drain_start_tick = 0U;
-    high_level_reached_tick = 0U;
     water_tank_release_process_outputs();
     return;
   }
@@ -647,7 +759,12 @@ static void process_water_tank(void)
     water_tank_recirc_active = 0U;
     hot_drain_active = 0U;
     hot_drain_start_tick = 0U;
-    high_level_reached_tick = 0U;
+    return;
+  }
+
+  if (water_tank_is_washing() != 0U)
+  {
+    process_wash_refill(recipe);
     return;
   }
 
@@ -693,7 +810,6 @@ static void process_water_tank(void)
     water_tank_state = WATER_TANK_STATE_IDLE;
     hot_drain_active = 0U;
     hot_drain_start_tick = 0U;
-    high_level_reached_tick = 0U;
     water_tank_outputs_off();
     water_tank_log(WATER_TANK_LOG_SENSOR_INVALID, &sensors);
     return;
@@ -807,6 +923,11 @@ static void process_water_tank(void)
   }
   else
   {
+    if (mix_sensor_valid(&sensors) == 0U)
+    {
+      refill_fault(AUTO_FAULT_SPARE_TEMP_SENSOR_INVALID);
+      return;
+    }
     water_tank_state = WATER_TANK_STATE_HEATING;
     start_hot_fill(&sensors, recipe);
     water_tank_log(WATER_TANK_LOG_HEAT, &sensors);
@@ -828,7 +949,6 @@ static void WaterTankTask(void *argument)
   current_valve_angle = WATER_TANK_VALVE_UNKNOWN;
   water_tank_state = WATER_TANK_STATE_IDLE;
   water_tank_recirc_active = 0U;
-  high_level_reached_tick = 0U;
   request_valve_angle(0U, 1U);
 
   for (;;)

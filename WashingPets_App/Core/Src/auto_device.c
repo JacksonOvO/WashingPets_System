@@ -277,6 +277,19 @@ void AutoDevice_ProcessInputs(void)
 
 uint8_t AutoDevice_ReadInput(AutoInputPoint point)
 {
+#if (AUTO_LIGHT_CURTAIN_SENSOR_BYPASS != 0U)
+  if ((point == AUTO_INPUT_UPPER_LIGHT_CURTAIN) ||
+      (point == AUTO_INPUT_LOWER_LIGHT_CURTAIN))
+  {
+    return 0U;
+  }
+#endif
+#if (AUTO_LOWER_DOOR_SENSOR_BYPASS != 0U)
+  if (point == AUTO_INPUT_LOWER_DOOR_CLOSED)
+  {
+    return 1U;
+  }
+#endif
 #if (APP_DRY_RUN_ENABLE != 0U)
   return (point < AUTO_INPUT_COUNT) ? dry_run_input_value(point) : 0U;
 #else

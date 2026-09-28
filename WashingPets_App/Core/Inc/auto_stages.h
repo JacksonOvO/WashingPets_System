@@ -25,7 +25,6 @@ typedef struct
 
 /* 冲洗阶段固定延时 */
 #define SPRAY_VALVES_SETTLE_MS     500U   /* 开淋浴阀和增压泵后的稳定延时 */
-#define SPRAY_CHECK_TIME_DELAY_MS   20U   /* 等待冲洗时间到达后的延时 */
 #define SPRAY_REPORT_DELAY_MS     2000U   /* 上报冲洗完成后的延时 */
 
 /* 沐浴阶段固定延时 */
@@ -47,7 +46,7 @@ typedef struct
  * 阶段总时长 = 配方时间(运行时从当前配方读取) + 对应固定开销宏。
  */
 #define SPRAY_STAGE_FIXED_MS \
-  (SPRAY_VALVES_SETTLE_MS + SPRAY_CHECK_TIME_DELAY_MS + SPRAY_REPORT_DELAY_MS)
+  (SPRAY_VALVES_SETTLE_MS + SPRAY_REPORT_DELAY_MS)
 #define BATH_STAGE_FIXED_MS \
   (BATH_WATER_PATH_DELAY_MS + BATH_PIPE_FLUSH_TIME_MS + BATH_REPORT_DELAY_MS)
 #define CLEAN_STAGE_FIXED_MS \

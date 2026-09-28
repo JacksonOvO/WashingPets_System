@@ -15,7 +15,6 @@ static AppFlowStepResult CheckTemp(AppFlowContext *, const AppFlowStep *);
 static AppFlowStepResult ValvesPumpOn(AppFlowContext *, const AppFlowStep *);
 static AppFlowStepResult TimerStart(AppFlowContext *, const AppFlowStep *);
 static AppFlowStepResult Monitor(AppFlowContext *, const AppFlowStep *);
-static AppFlowStepResult CheckTime(AppFlowContext *, const AppFlowStep *);
 static AppFlowStepResult ValvesPumpOff(AppFlowContext *, const AppFlowStep *);
 static AppFlowStepResult ReportDone(AppFlowContext *, const AppFlowStep *);
 
@@ -40,8 +39,7 @@ static const AppFlowStep steps[] = {
   AUTO_STEP(20, "SPRAY_CHECK_TEMP", 0U, 0U, CheckTemp, "检查管路水温"),
   AUTO_STEP(30, "SPRAY_VALVES_PUMP_ON", 0U, SPRAY_VALVES_SETTLE_MS, ValvesPumpOn, "打开全部淋浴阀并同步启动增压泵"),
   AUTO_STEP(90, "SPRAY_TIMER_START", 0U, 0U, TimerStart, "开始冲洗计时"),
-  AUTO_STEP(110, "SPRAY_MONITOR", 0U, 0U, Monitor, "检查管路水温"),
-  AUTO_STEP(120, "SPRAY_WAIT_TIME", 0U, SPRAY_CHECK_TIME_DELAY_MS, CheckTime, "等待冲洗时间到达"),
+  AUTO_STEP(110, "SPRAY_MONITOR", 0U, 0U, Monitor, "持续监测管路水温并等待冲洗时间到达"),
   AUTO_STEP(150, "SPRAY_VALVES_PUMP_OFF", 0U, 0U, ValvesPumpOff, "关闭增压泵和全部淋浴阀"),
   AUTO_STEP(160, "REPORT_SPRAY_DONE", 0U, SPRAY_REPORT_DELAY_MS, ReportDone, "上报冲洗完成"),
 };
@@ -113,8 +111,7 @@ static AppFlowStepResult ValvesPumpOn(AppFlowContext *ctx, const AppFlowStep *st
   const AppRecipe_t *recipe = AppParam_GetActiveRecipe();
   (void)ctx;
   (void)step;
-  (void)AutoDevice_SetOutput(AUTO_OUTPUT_TAP_WATER_VALVE, 0U);
-  (void)AutoDevice_SetOutput(AUTO_OUTPUT_STANDBY2_VALVE, 0U);
+  /* The water-tank task owns refill valves during washing. */
   (void)AutoDevice_SetOutput(AUTO_OUTPUT_BYPASS_VALVE, 0U);
   (void)AutoDevice_SetOutput(AUTO_OUTPUT_SELF_CLEAN_REAR_VALVE, 0U);
   AutoDevice_SetAllShowerValves(1U);
@@ -163,22 +160,11 @@ static AppFlowStepResult Monitor(AppFlowContext *ctx, const AppFlowStep *step)
     return APP_FLOW_STEP_FAIL;
   }
   temp_fault_start_tick = 0U;
-  return APP_FLOW_STEP_DONE;
-}
-
-static AppFlowStepResult CheckTime(AppFlowContext *ctx, const AppFlowStep *step)
-{
-  const AppRecipe_t *recipe = AppParam_GetActiveRecipe();
-  (void)step;
-
   if ((AutoDevice_GetProcessTick() - run_start_tick) >= recipe->spray_time_ms)
   {
     return APP_FLOW_STEP_DONE;
   }
-  return (AppFlow_JumpToStep(ctx, 110U) != 0U) ?
-         APP_FLOW_STEP_JUMP :
-         (AutoDevice_SetFault(AUTO_FAULT_FLOW_JUMP_FAILED),
-          APP_FLOW_STEP_FAIL);
+  return APP_FLOW_STEP_RUNNING;
 }
 
 static AppFlowStepResult ValvesPumpOff(AppFlowContext *ctx, const AppFlowStep *step)

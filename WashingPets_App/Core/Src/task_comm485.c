@@ -26,6 +26,8 @@
 #define COMM485_COMMAND_RETRY_MAX         2U
 #define COMM485_RETRY_BACKOFF_BASE_MS    250U
 #define COMM485_RETRY_BACKOFF_MAX_MS    2000U
+#define COMM485_SAFE_STOP_RETRY_DELAY_MS  20U
+#define COMM485_PROP_VALVE_FAILURE_LIMIT  (COMM485_COMMAND_RETRY_MAX + 1U)
 #define COMM485_DEBUG_ENABLE           1U
 #define COMM485_PROP_VALVE_REG_ANGLE   0x0001U
 #define COMM485_PROP_VALVE_MAX_ANGLE   90U
@@ -80,6 +82,7 @@ static uint8_t station_failure_count[248];
 static uint32_t station_next_retry_tick[248];
 static volatile uint32_t station_success_count[248];
 static volatile uint8_t self_test_pressure_priority;
+static uint8_t proportional_valve_failure_count;
 
 static const osThreadAttr_t comm485_task_attributes = {
   .name = "comm485",
@@ -449,7 +452,7 @@ HAL_StatusTypeDef TaskComm485_RequestSetProportionalValveAngle(uint8_t angle)
   }
   /*
    * 水箱高液位联锁（防溢流）已移回自动调温路径（task_water_tank.c 的
-   * request_valve_angle）：TANK_HIGH 为反逻辑，0=已到高液位，满箱后自动
+   * request_valve_angle）：TANK_HIGH 为反逻辑，高液位持续10秒后自动
    * 流程不再开混合阀。此处不再检查液位，工作台手动控制、单阶段自检在
    * 任意液位下都能驱动比例阀，便于验证阀体动作。
    */
@@ -526,8 +529,18 @@ void TaskComm485_RequestSafeStop(void)
   dry_run_zero_actuator_cache();
   safe_stop_requested = 0U;
 #else
-  TaskComm485_InhibitNonzero(COMM485_INHIBIT_SAFE_STOP);
-  safe_stop_requested = 1U;
+  uint32_t primask = __get_PRIMASK();
+
+  __disable_irq();
+  if ((nonzero_inhibit_reasons & COMM485_INHIBIT_SAFE_STOP) == 0U)
+  {
+    nonzero_inhibit_reasons |= COMM485_INHIBIT_SAFE_STOP;
+    safe_stop_requested = 1U;
+  }
+  if (primask == 0U)
+  {
+    __enable_irq();
+  }
 #endif
 }
 
@@ -636,6 +649,24 @@ static HAL_StatusTypeDef apply_proportional_valve_angle(uint8_t angle)
   }
   health_update_prop_valve(0U);
   return HAL_ERROR;
+}
+
+static void apply_proportional_valve_safe_zero(void)
+{
+  uint8_t attempt;
+
+  for (attempt = 0U; attempt < COMM485_PROP_VALVE_FAILURE_LIMIT; ++attempt)
+  {
+    if (apply_proportional_valve_angle(0U) == HAL_OK)
+    {
+      return;
+    }
+    TaskWatchdog_Heartbeat(TASK_WATCHDOG_COMM485);
+    if ((attempt + 1U) < COMM485_PROP_VALVE_FAILURE_LIMIT)
+    {
+      osDelay(COMM485_SAFE_STOP_RETRY_DELAY_MS);
+    }
+  }
 }
 
 static void clear_pending_command(const Comm485Command *command)
@@ -795,7 +826,7 @@ static void apply_all_actuators_zero(void)
   pending_booster_pump_running_valid = 0U;
   pending_booster_pump_percent_valid = 0U;
   pending_proportional_valve_angle_valid = 0U;
-  apply_proportional_valve_angle(0U);
+  apply_proportional_valve_safe_zero();
   TaskWatchdog_Heartbeat(TASK_WATCHDOG_COMM485);
 }
 
@@ -933,7 +964,40 @@ static void health_update_source(Comm485HealthSource source, uint8_t ok)
 
 static void health_update_prop_valve(uint8_t ok)
 {
-  health_update_source(COMM485_HEALTH_PROP_VALVE, ok);
+  const Comm485HealthSourceInfo *info =
+      &health_source_info[COMM485_HEALTH_PROP_VALVE];
+
+  if (ok != 0U)
+  {
+    bus_last_response_tick = HAL_GetTick();
+    health_last_ok_tick[COMM485_HEALTH_PROP_VALVE] = bus_last_response_tick;
+    proportional_valve_failure_count = 0U;
+    health_ok_count[COMM485_HEALTH_PROP_VALVE] = 0U;
+    if (health_faulted[COMM485_HEALTH_PROP_VALVE] != 0U)
+    {
+      health_faulted[COMM485_HEALTH_PROP_VALVE] = 0U;
+      health_fault_bitmap &= ~info->bitmap_bits;
+      if ((AutoFaultCode)info->fault_code == AutoDevice_GetFault())
+      {
+        AutoDevice_SetFault(
+            (AutoFaultCode)TaskComm485_GetFirstHealthFault());
+      }
+    }
+    return;
+  }
+
+  if (proportional_valve_failure_count < COMM485_PROP_VALVE_FAILURE_LIMIT)
+  {
+    proportional_valve_failure_count++;
+  }
+  if ((proportional_valve_failure_count >= COMM485_PROP_VALVE_FAILURE_LIMIT) &&
+      (health_faulted[COMM485_HEALTH_PROP_VALVE] == 0U))
+  {
+    health_faulted[COMM485_HEALTH_PROP_VALVE] = 1U;
+    health_fault_bitmap |= info->bitmap_bits;
+    AutoDevice_SetFault((AutoFaultCode)info->fault_code);
+    AutoDevice_Report(AUTO_REPORT_SENSOR_FAULT);
+  }
 }
 
 static void process_oxygen_sensor(void)
@@ -1329,6 +1393,7 @@ void TaskComm485_Create(void)
   memset(station_next_retry_tick, 0, sizeof(station_next_retry_tick));
   memset((void *)station_success_count, 0, sizeof(station_success_count));
   self_test_pressure_priority = 0U;
+  proportional_valve_failure_count = 0U;
 #if (APP_DRY_RUN_ENABLE == 0U)
   {
     uint32_t boot_tick = HAL_GetTick();

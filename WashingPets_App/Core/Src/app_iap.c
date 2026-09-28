@@ -671,7 +671,7 @@ static void send_param_block_response(uint8_t sequence, uint8_t group, uint8_t i
   memset(payload_out, 0, sizeof(payload_out));
   payload_out[0] = group;
   payload_out[1] = index;
-  write_u16_le(&payload_out[2], 1U);
+  write_u16_le(&payload_out[2], group == 1U ? APP_RECIPE_PROTOCOL_VERSION : 1U);
   write_u32_le(&payload_out[4], revision);
 
   if (group == 0U)
@@ -1063,8 +1063,24 @@ static void handle_query_status(uint8_t sequence, const uint8_t *data, uint16_t 
   send_device_status_with_seq(sequence);
 }
 
-static void lock_cabin_door_locks_for_auto_mode(void)
+static uint8_t cabin_doors_closed_for_auto_mode(void)
 {
+  return ((AutoDevice_ReadInput(AUTO_INPUT_UPPER_DOOR_CLOSED) != 0U) &&
+          (AutoDevice_ReadInput(AUTO_INPUT_LOWER_DOOR_CLOSED) != 0U)) ? 1U : 0U;
+}
+
+static void secure_cabin_for_auto_mode(void)
+{
+  if (cabin_doors_closed_for_auto_mode() != 0U)
+  {
+    TaskOutput_CancelAutoDoorClose();
+    (void)AutoDevice_SetOutput(AUTO_OUTPUT_DOOR_OPEN, 0U);
+    (void)AutoDevice_SetOutput(AUTO_OUTPUT_DOOR_CLOSE, 0U);
+  }
+  else
+  {
+    (void)TaskOutput_StartAutoDoorClose();
+  }
   (void)AutoDevice_SetOutput(AUTO_OUTPUT_UPPER_LOCK, 1U);
   (void)AutoDevice_SetOutput(AUTO_OUTPUT_LOWER_LOCK, 1U);
 }
@@ -1113,7 +1129,6 @@ static void handle_set_work_mode(uint8_t sequence, const uint8_t *data, uint16_t
     /* Re-sending auto mode while already in auto should be a no-op. */
     if (TaskOutput_IsAutoMode() != 0U)
     {
-      lock_cabin_door_locks_for_auto_mode();
       send_ack(APP_BUSINESS_CMD_SET_WORK_MODE, sequence, (uint32_t)get_work_mode());
       return;
     }
@@ -1128,7 +1143,7 @@ static void handle_set_work_mode(uint8_t sequence, const uint8_t *data, uint16_t
     TaskComm485_RequestSafeStop();
     AutoProcess_RequestReset();
     TaskOutput_SetAutoMode(1U);
-    lock_cabin_door_locks_for_auto_mode();
+    secure_cabin_for_auto_mode();
   }
   else
   {
@@ -1139,8 +1154,14 @@ static void handle_set_work_mode(uint8_t sequence, const uint8_t *data, uint16_t
     AutoDevice_SetPaused(0U);
     AutoDevice_SetStopRequested(0U);
     AutoProcess_RequestReset();
-    TaskOutput_ClearSource(APP_OUTPUT_SOURCE_AUTO);
+    TaskOutput_CancelAutoDoorClose();
+    (void)AutoDevice_SetOutput(AUTO_OUTPUT_DOOR_OPEN, 0U);
+    (void)AutoDevice_SetOutput(AUTO_OUTPUT_DOOR_CLOSE, 0U);
+    (void)AutoDevice_SetOutput(AUTO_OUTPUT_DOOR_STOP, 0U);
+    (void)TaskOutput_ClearSourceSync(APP_OUTPUT_SOURCE_AUTO,
+                                     APP_OUTPUT_SYNC_TIMEOUT_MS);
     TaskOutput_SetAutoMode(0U);
+    (void)TaskOutput_Sync(APP_OUTPUT_SYNC_TIMEOUT_MS);
   }
 
   send_ack(APP_BUSINESS_CMD_SET_WORK_MODE, sequence, (uint32_t)get_work_mode());
@@ -1184,6 +1205,19 @@ static void handle_process_control(uint8_t sequence, const uint8_t *data, uint16
       {
         send_nack(APP_BUSINESS_CMD_PROCESS_CONTROL, sequence,
                   IAP_ERR_BUSY, sequence, 0U);
+        break;
+      }
+      secure_cabin_for_auto_mode();
+      if (TaskOutput_Sync(APP_OUTPUT_SYNC_TIMEOUT_MS) != HAL_OK)
+      {
+        send_nack(APP_BUSINESS_CMD_PROCESS_CONTROL, sequence,
+                  IAP_ERR_BUSY, sequence, action);
+        break;
+      }
+      if (cabin_doors_closed_for_auto_mode() == 0U)
+      {
+        send_nack(APP_BUSINESS_CMD_PROCESS_CONTROL, sequence,
+                  IAP_ERR_BUSY, sequence, (uint32_t)AUTO_FAULT_DOOR_NOT_CLOSED);
         break;
       }
       AutoDevice_SetPaused(0U);
@@ -1302,6 +1336,21 @@ static void handle_process_control(uint8_t sequence, const uint8_t *data, uint16
                   IAP_ERR_BUSY, sequence, stage_id);
         break;
       }
+      /*
+       * 模式交接只负责避免已有锁输出瞬间掉电；这里由自动源正式接管
+       * OUT32/OUT33，并确认两路输出生效后才允许启动单阶段流程。
+       */
+      secure_cabin_for_auto_mode();
+      if ((TaskOutput_Sync(APP_OUTPUT_SYNC_TIMEOUT_MS) != HAL_OK) ||
+          (TaskOutput_GetActual(AUTO_OUTPUT_UPPER_LOCK) == 0U) ||
+          (TaskOutput_GetActual(AUTO_OUTPUT_LOWER_LOCK) == 0U))
+      {
+        TaskOutput_SetAutoMode(0U);
+        (void)TaskOutput_Sync(APP_OUTPUT_SYNC_TIMEOUT_MS);
+        send_nack(APP_BUSINESS_CMD_PROCESS_CONTROL, sequence,
+                  IAP_ERR_BUSY, sequence, stage_id);
+        break;
+      }
       AutoDevice_SetPaused(0U);
       AutoDevice_SetStopRequested(0U);
       AutoProcess_RequestReset();
@@ -1370,8 +1419,12 @@ static void handle_process_control(uint8_t sequence, const uint8_t *data, uint16
       AutoDevice_SetPaused(0U);
       AutoDevice_SetStopRequested(0U);
       AutoDevice_AllDangerousOutputsOff();
-      if (TaskOutput_ClearSourceSync(APP_OUTPUT_SOURCE_AUTO,
-                                     APP_OUTPUT_SYNC_TIMEOUT_MS) != HAL_OK)
+      /*
+       * 终止服务时只关闭危险工艺输出，门锁必须保持到出舱流程按步骤解锁。
+       * 若清空整个自动输出源，当前阶段尚未切换时门锁会先释放，
+       * 门安全巡检随即把它判为0x0102故障并中止流程。
+       */
+      if (TaskOutput_Sync(APP_OUTPUT_SYNC_TIMEOUT_MS) != HAL_OK)
       {
         send_nack(APP_BUSINESS_CMD_PROCESS_CONTROL, sequence,
                   IAP_ERR_BUSY, sequence, action);
@@ -1767,7 +1820,12 @@ static void handle_set_param_block(uint8_t sequence, const uint8_t *data, uint16
   revision = read_u32_le(&data[4]);
   data_length = read_u16_le(&data[8]);
 
-  if (protocol_version != 1U)
+  if ((uint32_t)length != 10U + (uint32_t)data_length)
+  {
+    send_nack(APP_BUSINESS_CMD_SET_PARAM_BLOCK, sequence, IAP_ERR_BAD_LENGTH, sequence, 0U);
+    return;
+  }
+  if (protocol_version != (group == 1U ? APP_RECIPE_PROTOCOL_VERSION : 1U))
   {
     send_nack(APP_BUSINESS_CMD_SET_PARAM_BLOCK, sequence, IAP_ERR_CONFIG, sequence, 0U);
     return;
@@ -2180,23 +2238,29 @@ void AppIap_Service(void)
     }
 
     /*
-     * 自动模式下出现活动故障（含485从站失联）时自动切回手动模式：
-     * 停止清洗/自检、复位自动流程并撤销自动输出请求，让上位机直接
-     * 回到可手动干预的状态。单阶段测试期间由测试自身收尾，不在此处理。
+     * 自动模式下出现活动故障（含485从站失联）时执行安全停机。
+     * 自清洁舱门条件故障是例外：危险设备停止，但保持自动模式及门锁，
+     * 避免清空自动输出后把已经吸合的OUT32/OUT33一并释放。
+     * 其他故障仍切回手动模式。单阶段测试由测试自身收尾。
      */
     if ((TaskOutput_IsAutoMode() != 0U) &&
         (AutoProcess_IsStageTestActive() == 0U) &&
         (AutoDevice_GetFault() != AUTO_FAULT_NONE))
     {
+      AutoFaultCode active_fault = AutoDevice_GetFault();
+
       TaskComm485_InhibitNonzero(COMM485_INHIBIT_MODE_CHANGE);
       TaskComm485_RequestSafeStop();
       TaskClean_Stop();
       TaskSelfTest_Stop();
       AutoDevice_SetPaused(0U);
       AutoDevice_SetStopRequested(0U);
-      AutoProcess_RequestReset();
-      TaskOutput_ClearSource(APP_OUTPUT_SOURCE_AUTO);
-      TaskOutput_SetAutoMode(0U);
+      if (active_fault != AUTO_FAULT_SELF_CLEAN_NOT_ALLOWED)
+      {
+        AutoProcess_RequestReset();
+        TaskOutput_ClearSource(APP_OUTPUT_SOURCE_AUTO);
+        TaskOutput_SetAutoMode(0U);
+      }
     }
 
     /* 故障/健康位图变化聚合上报：巡检置位的新故障与位图变化（恢复、

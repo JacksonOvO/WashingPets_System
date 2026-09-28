@@ -480,8 +480,9 @@ static uint32_t stage_duration_ms(uint16_t stage)
     case AUTO_PROCESS_STAGE_SPRAY:
       return recipe->spray_time_ms + SPRAY_STAGE_FIXED_MS;
     case AUTO_PROCESS_STAGE_BATH:
-      return recipe->liquid_soak_time_ms + recipe->bath_time_ms +
-             BATH_STAGE_FIXED_MS;
+      return recipe->bath_cycle_count == 0U ? BATH_REPORT_DELAY_MS :
+             recipe->bath_cycle_count * (recipe->bath_liquid_time_ms + recipe->bath_on_time_ms) +
+             (recipe->bath_cycle_count - 1U) * recipe->bath_pause_time_ms + BATH_STAGE_FIXED_MS;
     case AUTO_PROCESS_STAGE_CLEAN:
       return recipe->clean_time_ms + CLEAN_STAGE_FIXED_MS;
     case AUTO_PROCESS_STAGE_DRY:

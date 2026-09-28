@@ -19,6 +19,21 @@
 #define APP_DRY_RUN_ENABLE  0U
 
 /*
+ * 下门门磁临时旁路开关：
+ * 1U：下门门磁未安装时，自动流程和互锁把下门关闭信号视为已到位；
+ *     进/出舱流程中的“等待下门打开”步骤也直接放行。
+ * 0U：读取真实下门门磁。
+ */
+#define AUTO_LOWER_DOOR_SENSOR_BYPASS  0U
+
+/*
+ * 上下门光幕临时旁路开关：
+ * 1U：光幕未安装，两路光幕固定视为未触发；
+ * 0U：光幕安装完成，读取真实上下门光幕输入。
+ */
+#define AUTO_LIGHT_CURTAIN_SENSOR_BYPASS  1U
+
+/*
  * RS485流量阀临时旁路开关：
  * 0U：未安装流量阀，不发送控制命令，自动流程直接跳过相关等待。
  * 1U：安装流量阀后启用真实控制和流程等待。
@@ -98,7 +113,7 @@ typedef enum
   AUTO_OUTPUT_RIGHT_LOCK,                   /* OUT35-PF7：右电插锁。 */
   AUTO_OUTPUT_REAR_LOCK_1,                  /* OUT36-PF8：后电插锁1。 */
   AUTO_OUTPUT_REAR_LOCK_2,                  /* OUT37-PF9：后电插锁2。 */
-  AUTO_OUTPUT_LOWER_DOOR_LIGHT,             /* OUT38-PF10：下门灯板。 */
+  AUTO_OUTPUT_DOOR_OPEN,                    /* OUT38-PF10：自动开门输出。 */
   AUTO_OUTPUT_STANDBY2_VALVE,               /* OUT39-PC0：热水器阀。 */
   AUTO_OUTPUT_MAIN_POWER,                   /* OUT40-PC1：主板电源控制。 */
   AUTO_OUTPUT_COUNT

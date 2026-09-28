@@ -1,18 +1,25 @@
 #include "auto_stages.h"
 
 #include "auto_device.h"
+#include "task_output.h"
+
+#define DOOR_LOCK_SETTLE_MS       300U
+#define DOOR_LOCK_SYNC_TIMEOUT_MS 100U
+#define UPPER_LOCK_CONFIRM_MS     2000U
 
 static uint8_t upper_locked;
 static uint8_t lower_locked;
 static uint8_t auto_close_received;
-static uint8_t auto_close_output_on;
+static uint32_t upper_lock_confirm_tick;
 
 static void ExitReset(void)
 {
   upper_locked = 0U;
   lower_locked = 0U;
   auto_close_received = 0U;
-  auto_close_output_on = 0U;
+  upper_lock_confirm_tick = 0U;
+  TaskOutput_CancelAutoDoorClose();
+  (void)AutoDevice_SetOutput(AUTO_OUTPUT_DOOR_OPEN, 0U);
   (void)AutoDevice_SetOutput(AUTO_OUTPUT_DOOR_CLOSE, 0U);
 }
 
@@ -57,12 +64,12 @@ static const AppFlowStep steps[] = {
   AUTO_STEP(110, "REQUEST_EXIT_CLOSE_LOWER_DOOR", 0U, 0U, RequestCloseLowerDoor, "请求上位机关闭下舱门"),
   AUTO_STEP(120, "WAIT_EXIT_CLOSE_LOWER_DOOR_CMD", 0U, 0U, WaitCloseLowerDoor, "等待上位机发送关下舱门命令"),
   AUTO_STEP(130, "WAIT_EXIT_LOWER_DOOR_CLOSED_OR_AUTO_CLOSE", 0U, 0U, WaitLowerDoorClosedOrAutoClose, "等待下舱门关闭到位或自动关门信号"),
-  AUTO_STEP(140, "LOCK_EXIT_LOWER_DOOR", 0U, 0U, LockLowerDoor, "触发下舱门电磁锁"),
+  AUTO_STEP(140, "LOCK_EXIT_LOWER_DOOR", 0U, DOOR_LOCK_SETTLE_MS, LockLowerDoor, "触发下舱门电磁锁"),
   AUTO_STEP(150, "CHECK_EXIT_LOWER_DOOR_LOCKED", 0U, 0U, CheckLowerDoorLocked, "检测下舱门到位输入"),
   AUTO_STEP(160, "REQUEST_EXIT_CLOSE_UPPER_DOOR", 0U, 0U, RequestCloseUpperDoor, "请求上位机关闭上舱门"),
   AUTO_STEP(170, "WAIT_EXIT_CLOSE_UPPER_DOOR_CMD", 0U, 0U, WaitCloseUpperDoor, "等待上位机发送关上舱门命令"),
   AUTO_STEP(180, "WAIT_EXIT_UPPER_DOOR_CLOSED_OR_AUTO_CLOSE", 0U, 0U, WaitUpperDoorClosedOrAutoClose, "等待上舱门关闭到位或自动关门信号"),
-  AUTO_STEP(190, "LOCK_EXIT_UPPER_DOOR", 0U, 0U, LockUpperDoor, "触发上舱门电磁锁"),
+  AUTO_STEP(190, "LOCK_EXIT_UPPER_DOOR", 0U, DOOR_LOCK_SETTLE_MS, LockUpperDoor, "触发上舱门电磁锁"),
   AUTO_STEP(200, "CHECK_EXIT_UPPER_DOOR_LOCKED", 0U, 0U, CheckUpperDoorLocked, "检测上舱门到位输入"),
   AUTO_STEP(210, "REPORT_EXIT_DONE", 0U, 0U, ReportExitDone, "上报出舱流程完成"),
 };
@@ -103,28 +110,21 @@ static AppFlowStepResult jump_to_step(AppFlowContext *ctx, uint16_t step_id)
 static HAL_StatusTypeDef start_auto_close_output(void)
 {
   auto_close_received = 1U;
-  if (auto_close_output_on != 0U)
-  {
-    return HAL_OK;
-  }
-  if (AutoDevice_SetOutput(AUTO_OUTPUT_DOOR_CLOSE, 1U) != HAL_OK)
-  {
-    return HAL_ERROR;
-  }
-  auto_close_output_on = 1U;
-  return HAL_OK;
+  return TaskOutput_StartAutoDoorClose();
 }
 
 static void stop_auto_close_output(void)
 {
+  TaskOutput_CancelAutoDoorClose();
+  (void)AutoDevice_SetOutput(AUTO_OUTPUT_DOOR_OPEN, 0U);
   (void)AutoDevice_SetOutput(AUTO_OUTPUT_DOOR_CLOSE, 0U);
-  auto_close_output_on = 0U;
 }
 
 static AppFlowStepResult RequestOpenUpperDoor(AppFlowContext *ctx, const AppFlowStep *step)
 {
   (void)ctx;
   (void)step;
+  stop_auto_close_output();
   AutoDevice_RequestHostInteraction(1U);
   return APP_FLOW_STEP_DONE;
 }
@@ -142,6 +142,7 @@ static AppFlowStepResult UnlockUpperDoor(AppFlowContext *ctx, const AppFlowStep 
   (void)ctx;
   (void)step;
   upper_locked = 0U;
+  stop_auto_close_output();
   return (AutoDevice_SetOutput(AUTO_OUTPUT_UPPER_LOCK, 0U) == HAL_OK) ?
          APP_FLOW_STEP_DONE :
          (AutoDevice_SetFault(AUTO_FAULT_UPPER_LOCK_OUTPUT_FAILED),
@@ -195,8 +196,12 @@ static AppFlowStepResult WaitLowerDoorOpen(AppFlowContext *ctx, const AppFlowSte
 {
   (void)ctx;
   (void)step;
+#if (AUTO_LOWER_DOOR_SENSOR_BYPASS != 0U)
+  return APP_FLOW_STEP_DONE;
+#else
   return (lower_door_closed() == 0U) ?
          APP_FLOW_STEP_DONE : APP_FLOW_STEP_RUNNING;
+#endif
 }
 
 static AppFlowStepResult ReportLowerDoorOpen(AppFlowContext *ctx, const AppFlowStep *step)
@@ -265,7 +270,9 @@ static AppFlowStepResult LockLowerDoor(AppFlowContext *ctx, const AppFlowStep *s
 {
   (void)ctx;
   (void)step;
-  if (AutoDevice_SetOutput(AUTO_OUTPUT_LOWER_LOCK, 1U) != HAL_OK)
+  if ((AutoDevice_SetOutput(AUTO_OUTPUT_LOWER_LOCK, 1U) != HAL_OK) ||
+      (TaskOutput_Sync(DOOR_LOCK_SYNC_TIMEOUT_MS) != HAL_OK) ||
+      (TaskOutput_GetActual(AUTO_OUTPUT_LOWER_LOCK) == 0U))
   {
     AutoDevice_SetFault(AUTO_FAULT_LOWER_LOCK_OUTPUT_FAILED);
     return APP_FLOW_STEP_FAIL;
@@ -346,32 +353,65 @@ static AppFlowStepResult LockUpperDoor(AppFlowContext *ctx, const AppFlowStep *s
 {
   (void)ctx;
   (void)step;
-  if (AutoDevice_SetOutput(AUTO_OUTPUT_UPPER_LOCK, 1U) != HAL_OK)
+  if ((AutoDevice_SetOutput(AUTO_OUTPUT_UPPER_LOCK, 1U) != HAL_OK) ||
+      (TaskOutput_Sync(DOOR_LOCK_SYNC_TIMEOUT_MS) != HAL_OK) ||
+      (TaskOutput_GetActual(AUTO_OUTPUT_UPPER_LOCK) == 0U))
   {
     AutoDevice_SetFault(AUTO_FAULT_UPPER_LOCK_OUTPUT_FAILED);
     return APP_FLOW_STEP_FAIL;
   }
   upper_locked = 1U;
+  upper_lock_confirm_tick = AutoDevice_GetProcessTick();
   AutoDevice_Report(AUTO_REPORT_UPPER_DOOR_LOCKED);
   return APP_FLOW_STEP_DONE;
 }
 
 static AppFlowStepResult CheckUpperDoorLocked(AppFlowContext *ctx, const AppFlowStep *step)
 {
+  uint32_t now;
+
+  (void)ctx;
   (void)step;
-  if ((upper_locked != 0U) && (upper_door_closed() != 0U))
+
+  if ((upper_locked == 0U) ||
+      (TaskOutput_GetActual(AUTO_OUTPUT_UPPER_LOCK) == 0U))
   {
-    return APP_FLOW_STEP_DONE;
+    AutoDevice_SetFault(AUTO_FAULT_UPPER_LOCK_OUTPUT_FAILED);
+    return APP_FLOW_STEP_FAIL;
   }
-  upper_locked = 0U;
-  (void)AutoDevice_SetOutput(AUTO_OUTPUT_UPPER_LOCK, 0U);
-  return jump_to_step(ctx, 180U);
+
+  if (upper_door_closed() == 0U)
+  {
+    /* 门磁短暂丢失时保持电磁锁，只重新计算连续到位时间。 */
+    upper_lock_confirm_tick = 0U;
+    return APP_FLOW_STEP_RUNNING;
+  }
+
+  now = AutoDevice_GetProcessTick();
+  if (upper_lock_confirm_tick == 0U)
+  {
+    upper_lock_confirm_tick = now;
+    return APP_FLOW_STEP_RUNNING;
+  }
+
+  return ((now - upper_lock_confirm_tick) >= UPPER_LOCK_CONFIRM_MS) ?
+         APP_FLOW_STEP_DONE : APP_FLOW_STEP_RUNNING;
 }
 
 static AppFlowStepResult ReportExitDone(AppFlowContext *ctx, const AppFlowStep *step)
 {
-  (void)ctx;
   (void)step;
+
+  if (TaskOutput_GetActual(AUTO_OUTPUT_UPPER_LOCK) == 0U)
+  {
+    AutoDevice_SetFault(AUTO_FAULT_UPPER_LOCK_OUTPUT_FAILED);
+    return APP_FLOW_STEP_FAIL;
+  }
+  if (upper_door_closed() == 0U)
+  {
+    upper_lock_confirm_tick = 0U;
+    return jump_to_step(ctx, 200U);
+  }
   stop_auto_close_output();
   AutoDevice_Report(AUTO_REPORT_EXIT_DONE);
   return APP_FLOW_STEP_DONE;

@@ -7,6 +7,7 @@
 
 #define CLEAN_DRY_PREHEAT_FAN_PERCENT       50U
 #define CLEAN_DRY_PREHEAT_HEATER_PERCENT   100U
+#define CLEAN_DRY_PREHEAT_LEAD_MS        60000U
 
 static uint32_t clean_start_tick;
 static uint8_t dry_preheat_started;
@@ -69,7 +70,12 @@ static void clean_stop(void)
 
 static void start_dry_preheat(void)
 {
-  if (dry_preheat_started != 0U)
+  const AppRecipe_t *recipe = AppParam_GetActiveRecipe();
+  uint32_t elapsed_ms = AutoDevice_GetProcessTick() - clean_start_tick;
+
+  /* Use the pause-aware cleaning clock; never heat for a zero/finished cycle. */
+  if ((dry_preheat_started != 0U) || (elapsed_ms >= recipe->clean_time_ms) ||
+      ((recipe->clean_time_ms - elapsed_ms) > CLEAN_DRY_PREHEAT_LEAD_MS))
   {
     return;
   }
@@ -166,6 +172,7 @@ static AppFlowStepResult Monitor(AppFlowContext *ctx, const AppFlowStep *step)
     return APP_FLOW_STEP_DONE;
   }
 
+  start_dry_preheat();
   return APP_FLOW_STEP_RUNNING;
 }
 
@@ -198,8 +205,8 @@ static const AppFlowStep steps[] = {
   AUTO_STEP(20, "CLEAN_CHECK_TEMP", 0U, 0U, CheckTemp, "检查管路水温"),
   AUTO_STEP(30, "CLEAN_VALVES_PUMP_ON", 0U, CLEAN_VALVES_SETTLE_MS, ValvesPumpOn, "打开全部淋浴阀并同步启动增压泵"),
   AUTO_STEP(60, "CLEAN_TIMER_START", 0U, 0U, TimerStart, "开始清洗计时"),
-  AUTO_STEP(65, "CLEAN_DRY_PREHEAT", 0U, 0U, DryPreheat, "吹风机低速预热"),
-  AUTO_STEP(80, "CLEAN_MONITOR", 0U, 0U, Monitor, "监测管路水温和检测清洗时间是否到达"),
+  AUTO_STEP(65, "CLEAN_DRY_PREHEAT", 0U, 0U, DryPreheat, "检查是否进入清洗结束前60秒预热窗口"),
+  AUTO_STEP(80, "CLEAN_MONITOR", 0U, 0U, Monitor, "监测水温和清洗时间，剩余60秒启动预热"),
   AUTO_STEP(110, "CLEAN_VALVES_PUMP_OFF", 0U, 0U, ValvesPumpOff, "关闭增压泵和全部淋浴阀"),
   AUTO_STEP(120, "REPORT_CLEAN_DONE", 0U, CLEAN_REPORT_DELAY_MS, ReportDone, "上报清洗完成"),
 };

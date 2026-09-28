@@ -14,8 +14,13 @@
 /* 即使没有新命令也每10ms复查急停、光幕和门到位输入。 */
 #define OUTPUT_RECHECK_MS       10U
 #define OUTPUT_SYNC_FLAG        0x00000001U
-/* 水箱到高液位后继续补水15秒，再由输出互锁强制关进水阀。 */
-#define OUTPUT_TANK_HIGH_STOP_DELAY_MS 15000U
+#define OUTPUT_TOP_EXHAUST_DEFAULT_PERCENT 100U
+/* 闭门器手动移动后必须先收到一次开门命令，才会接受后续关门命令。 */
+#define OUTPUT_DOOR_OPEN_HANDSHAKE_MS    300U
+#define OUTPUT_DOOR_OPEN_TO_CLOSE_MS     200U
+#define OUTPUT_DOOR_CLOSE_PULSE_MS       300U
+#define OUTPUT_DOOR_CLOSE_PERIOD_MS     1000U
+#define OUTPUT_DOOR_CLOSE_TIMEOUT_MS   20000U
 
 /* 单个输出点与STM32实际GPIO之间的硬件映射。 */
 typedef struct
@@ -32,8 +37,20 @@ typedef enum
   OUTPUT_COMMAND_SET_MODE,      /* 切换自动/手动输出仲裁模式。 */
   OUTPUT_COMMAND_CLEAR_SOURCE,  /* 清除某一来源的全部请求。 */
   OUTPUT_COMMAND_ALL_OFF,       /* 清除自动和手动两套请求。 */
+  OUTPUT_COMMAND_SET_TOP_EXHAUST_PERCENT,
+  OUTPUT_COMMAND_START_AUTO_DOOR_CLOSE,
+  OUTPUT_COMMAND_CANCEL_AUTO_DOOR_CLOSE,
   OUTPUT_COMMAND_SYNC           /* 同步屏障：确认前序输出命令已处理。 */
 } OutputCommandType;
+
+typedef enum
+{
+  AUTO_DOOR_CLOSE_IDLE = 0,
+  AUTO_DOOR_CLOSE_OPEN_PULSE,
+  AUTO_DOOR_CLOSE_OPEN_GAP,
+  AUTO_DOOR_CLOSE_CLOSE_PULSE,
+  AUTO_DOOR_CLOSE_CLOSE_GAP
+} AutoDoorCloseState;
 
 /* 自动流程、上位机手动控制发送给输出任务的一条消息。 */
 typedef struct
@@ -41,7 +58,7 @@ typedef struct
   OutputCommandType type;   /* 本条消息要执行的操作。 */
   AppOutputSource source;   /* 请求来自自动流程还是手动控制。 */
   AutoOutputPoint point;    /* 目标输出点编号。 */
-  uint8_t enabled;          /* 逻辑状态：1=开启，0=关闭。 */
+  uint8_t enabled;          /* SET为逻辑状态；顶部风机功率命令为0~100。 */
   osThreadId_t sync_thread;  /* 同步等待线程；仅 OUTPUT_COMMAND_SYNC 使用。 */
   uint32_t sync_flag;        /* 同步回执标志；仅 OUTPUT_COMMAND_SYNC 使用。 */
 } OutputCommand;
@@ -90,7 +107,7 @@ static const OutputHw output_hw_table[AUTO_OUTPUT_COUNT] = {
   [AUTO_OUTPUT_RIGHT_LOCK] = {GPIOF, GPIO_PIN_7, 0U}, /* 右电插锁。 */
   [AUTO_OUTPUT_REAR_LOCK_1] = {GPIOF, GPIO_PIN_8, 0U}, /* 后电插锁1。 */
   [AUTO_OUTPUT_REAR_LOCK_2] = {GPIOF, GPIO_PIN_9, 0U}, /* 后电插锁2。 */
-  [AUTO_OUTPUT_LOWER_DOOR_LIGHT] = {GPIOF, GPIO_PIN_10, 0U}, /* 下门灯板，急停时强制关断。 */
+  [AUTO_OUTPUT_DOOR_OPEN] = {GPIOF, GPIO_PIN_10, 0U}, /* 自动开门输出。 */
   [AUTO_OUTPUT_STANDBY2_VALVE] = {GPIOC, GPIO_PIN_0, 0U}, /* 热水器阀。 */
   [AUTO_OUTPUT_MAIN_POWER] = {GPIOC, GPIO_PIN_1, 0U}, /* 主板电源控制。 */
 };
@@ -102,7 +119,8 @@ static osMessageQueueId_t output_queue;
 static volatile uint8_t output_auto_mode;
 static volatile uint8_t requested_auto_mode;
 static volatile uint8_t dangerous_off_requested;
-static uint8_t tank_high_level_protect_latched;
+static volatile uint8_t tank_high_level_protect_latched;
+static uint8_t tank_high_level_tracking;
 static uint32_t tank_high_level_reached_tick;
 /* 自动流程对38个点提出的最新逻辑请求。 */
 static uint8_t auto_request[AUTO_OUTPUT_COUNT];
@@ -110,8 +128,14 @@ static uint8_t auto_request[AUTO_OUTPUT_COUNT];
 static uint8_t manual_request[AUTO_OUTPUT_COUNT];
 /* 经过模式选择与全部互锁后，真正写到硬件的逻辑状态。 */
 static volatile uint8_t actual_output[AUTO_OUTPUT_COUNT];
+static uint8_t top_exhaust_on_percent = OUTPUT_TOP_EXHAUST_DEFAULT_PERCENT;
 /* 防止main和输出线程重复初始化GPIO。 */
 static uint8_t hardware_initialized;
+static AutoDoorCloseState auto_door_close_state;
+static uint32_t auto_door_close_start_tick;
+static uint32_t auto_door_close_phase_tick;
+static uint8_t auto_door_close_active;
+static uint8_t auto_door_close_paused;
 
 static const osThreadAttr_t output_task_attributes = {
   .name = "output",
@@ -199,7 +223,6 @@ static uint8_t output_is_dangerous(AutoOutputPoint point)
     case AUTO_OUTPUT_RIGHT_LOCK:
     case AUTO_OUTPUT_REAR_LOCK_1:
     case AUTO_OUTPUT_REAR_LOCK_2:
-    case AUTO_OUTPUT_LOWER_DOOR_LIGHT:
     case AUTO_OUTPUT_MAIN_POWER:
       return 0U;
 
@@ -262,23 +285,30 @@ static uint8_t tank_high_level_protect_active(void)
 {
   /*
    * 蓄水箱液位为反逻辑：
-   * 0 = 已到高液位，保持15秒后必须停止继续进水；
+   * 0 = 已到高液位，保持10秒后必须停止继续进水；
    * 1 = 未到高液位。
    */
   if (AutoDevice_ReadInput(AUTO_INPUT_TANK_HIGH) != 0U)
   {
     tank_high_level_reached_tick = 0U;
+    tank_high_level_tracking = 0U;
     return 0U;
   }
 
-  if (tank_high_level_reached_tick == 0U)
+  if (tank_high_level_tracking == 0U)
   {
     tank_high_level_reached_tick = HAL_GetTick();
+    tank_high_level_tracking = 1U;
     return 0U;
   }
 
   return ((HAL_GetTick() - tank_high_level_reached_tick) >=
           OUTPUT_TANK_HIGH_STOP_DELAY_MS) ? 1U : 0U;
+}
+
+uint8_t TaskOutput_IsTankHighStopActive(void)
+{
+  return tank_high_level_protect_latched;
 }
 
 static uint8_t output_interlock_allow(AutoOutputPoint point, uint8_t enabled)
@@ -377,7 +407,8 @@ static void output_apply(AutoOutputPoint point)
     if (target != previous)
     {
       (void)TaskComm485_RequestSetPercent(RS485_STATION_TOP_EXHAUST_FAN,
-                                          (target != 0U) ? 100U : 0U);
+                                          (target != 0U) ?
+                                          top_exhaust_on_percent : 0U);
     }
     return;
   }
@@ -389,6 +420,138 @@ static void output_apply(AutoOutputPoint point)
                     hw->pin,
                     output_pin_state(point, target));
 #endif
+}
+
+static uint8_t auto_door_close_reached(void)
+{
+  return ((AutoDevice_ReadInput(AUTO_INPUT_UPPER_DOOR_CLOSED) != 0U) &&
+          (AutoDevice_ReadInput(AUTO_INPUT_LOWER_DOOR_CLOSED) != 0U)) ? 1U : 0U;
+}
+
+static void auto_door_close_outputs_off(void)
+{
+  auto_request[AUTO_OUTPUT_DOOR_OPEN] = 0U;
+  auto_request[AUTO_OUTPUT_DOOR_CLOSE] = 0U;
+  auto_request[AUTO_OUTPUT_DOOR_STOP] = 0U;
+}
+
+static void auto_door_close_cancel_internal(void)
+{
+  auto_door_close_outputs_off();
+  auto_door_close_state = AUTO_DOOR_CLOSE_IDLE;
+  auto_door_close_start_tick = 0U;
+  auto_door_close_phase_tick = 0U;
+  auto_door_close_active = 0U;
+  auto_door_close_paused = 0U;
+}
+
+static void auto_door_close_start_internal(void)
+{
+  uint32_t now = HAL_GetTick();
+
+  auto_door_close_cancel_internal();
+  if (auto_door_close_reached() != 0U)
+  {
+    return;
+  }
+
+  auto_door_close_active = 1U;
+  auto_door_close_state = AUTO_DOOR_CLOSE_OPEN_PULSE;
+  auto_door_close_start_tick = now;
+  auto_door_close_phase_tick = now;
+  auto_request[AUTO_OUTPUT_DOOR_OPEN] = 1U;
+}
+
+static void auto_door_close_process(void)
+{
+  uint32_t now;
+
+  if (auto_door_close_active == 0U)
+  {
+    return;
+  }
+  if ((output_auto_mode == 0U) ||
+      (AutoDevice_IsEmergencyStopped() != 0U) ||
+      (AutoDevice_IsStopRequested() != 0U))
+  {
+    auto_door_close_cancel_internal();
+    return;
+  }
+
+  if (AutoDevice_IsPaused() != 0U)
+  {
+    auto_door_close_outputs_off();
+    auto_door_close_state = AUTO_DOOR_CLOSE_OPEN_PULSE;
+    auto_door_close_paused = 1U;
+    return;
+  }
+
+  now = HAL_GetTick();
+  if (auto_door_close_paused != 0U)
+  {
+    auto_door_close_paused = 0U;
+    auto_door_close_start_tick = now;
+    auto_door_close_phase_tick = now;
+    auto_request[AUTO_OUTPUT_DOOR_OPEN] = 1U;
+  }
+
+  if (auto_door_close_reached() != 0U)
+  {
+    auto_door_close_cancel_internal();
+    return;
+  }
+  if ((now - auto_door_close_start_tick) >= OUTPUT_DOOR_CLOSE_TIMEOUT_MS)
+  {
+    auto_door_close_cancel_internal();
+    AutoDevice_SetFault(AUTO_FAULT_DOOR_NOT_CLOSED);
+    AutoDevice_SetStopRequested(1U);
+    AutoDevice_Report(AUTO_REPORT_TIMEOUT_FAULT);
+    return;
+  }
+
+  switch (auto_door_close_state)
+  {
+    case AUTO_DOOR_CLOSE_OPEN_PULSE:
+      if ((now - auto_door_close_phase_tick) >= OUTPUT_DOOR_OPEN_HANDSHAKE_MS)
+      {
+        auto_request[AUTO_OUTPUT_DOOR_OPEN] = 0U;
+        auto_door_close_state = AUTO_DOOR_CLOSE_OPEN_GAP;
+        auto_door_close_phase_tick = now;
+      }
+      break;
+
+    case AUTO_DOOR_CLOSE_OPEN_GAP:
+      if ((now - auto_door_close_phase_tick) >= OUTPUT_DOOR_OPEN_TO_CLOSE_MS)
+      {
+        auto_request[AUTO_OUTPUT_DOOR_CLOSE] = 1U;
+        auto_door_close_state = AUTO_DOOR_CLOSE_CLOSE_PULSE;
+        auto_door_close_phase_tick = now;
+      }
+      break;
+
+    case AUTO_DOOR_CLOSE_CLOSE_PULSE:
+      if ((now - auto_door_close_phase_tick) >= OUTPUT_DOOR_CLOSE_PULSE_MS)
+      {
+        auto_request[AUTO_OUTPUT_DOOR_CLOSE] = 0U;
+        auto_door_close_state = AUTO_DOOR_CLOSE_CLOSE_GAP;
+        auto_door_close_phase_tick = now;
+      }
+      break;
+
+    case AUTO_DOOR_CLOSE_CLOSE_GAP:
+      if ((now - auto_door_close_phase_tick) >=
+          (OUTPUT_DOOR_CLOSE_PERIOD_MS - OUTPUT_DOOR_CLOSE_PULSE_MS))
+      {
+        auto_request[AUTO_OUTPUT_DOOR_CLOSE] = 1U;
+        auto_door_close_state = AUTO_DOOR_CLOSE_CLOSE_PULSE;
+        auto_door_close_phase_tick = now;
+      }
+      break;
+
+    default:
+      auto_door_close_cancel_internal();
+      break;
+  }
 }
 
 /* 重新检查并刷新全部输出点，急停等输入变化无需等待新输出命令。 */
@@ -405,6 +568,18 @@ static void output_apply_all(void)
 
   if (dangerous_off_requested != 0U)
   {
+    top_exhaust_on_percent = OUTPUT_TOP_EXHAUST_DEFAULT_PERCENT;
+    if ((AutoDevice_IsPaused() != 0U) &&
+        (auto_door_close_active != 0U))
+    {
+      auto_door_close_outputs_off();
+      auto_door_close_state = AUTO_DOOR_CLOSE_OPEN_PULSE;
+      auto_door_close_paused = 1U;
+    }
+    else
+    {
+      auto_door_close_cancel_internal();
+    }
     for (point = AUTO_OUTPUT_EXHAUST_FAN; point < AUTO_OUTPUT_COUNT; ++point)
     {
       if (output_is_dangerous(point) != 0U)
@@ -415,6 +590,8 @@ static void output_apply_all(void)
     }
     dangerous_off_requested = 0U;
   }
+
+  auto_door_close_process();
 
   if (tank_high_level_protect_active() != 0U)
   {
@@ -432,6 +609,17 @@ static void output_apply_all(void)
   else
   {
     tank_high_level_protect_latched = 0U;
+  }
+
+  /*
+   * OUT30 是一次性关门请求。门到位后必须同时清除请求，
+   * 否则门磁再次断开时，旧请求会重新驱动闭门器。
+   */
+  if ((AutoDevice_ReadInput(AUTO_INPUT_UPPER_DOOR_CLOSED) != 0U) &&
+      (AutoDevice_ReadInput(AUTO_INPUT_LOWER_DOOR_CLOSED) != 0U))
+  {
+    auto_request[AUTO_OUTPUT_DOOR_CLOSE] = 0U;
+    manual_request[AUTO_OUTPUT_DOOR_CLOSE] = 0U;
   }
 
   for (point = AUTO_OUTPUT_EXHAUST_FAN; point < AUTO_OUTPUT_COUNT; ++point)
@@ -466,7 +654,21 @@ static void output_clear_source(AppOutputSource source)
   {
     request[point] = 0U;
   }
+  if (source == APP_OUTPUT_SOURCE_AUTO)
+  {
+    top_exhaust_on_percent = OUTPUT_TOP_EXHAUST_DEFAULT_PERCENT;
+    auto_door_close_cancel_internal();
+  }
   request[AUTO_OUTPUT_LIGHTING] = 1U;
+}
+
+static void output_clear_door_closer_requests(void)
+{
+  auto_door_close_cancel_internal();
+  auto_request[AUTO_OUTPUT_DOOR_CLOSE] = 0U;
+  auto_request[AUTO_OUTPUT_DOOR_STOP] = 0U;
+  manual_request[AUTO_OUTPUT_DOOR_CLOSE] = 0U;
+  manual_request[AUTO_OUTPUT_DOOR_STOP] = 0U;
 }
 
 /* 在输出线程上下文中串行执行一条队列命令。 */
@@ -494,19 +696,47 @@ static void output_process_command(const OutputCommand *command)
       break;
 
     case OUTPUT_COMMAND_SET_MODE:
-      if ((command->enabled != 0U) &&
+    {
+      uint8_t next_auto_mode = (command->enabled != 0U) ? 1U : 0U;
+      uint8_t preserve_upper_lock = 0U;
+      uint8_t preserve_lower_lock = 0U;
+
+      if ((next_auto_mode != 0U) &&
           (AutoDevice_IsEmergencyStopped() != 0U))
       {
         break;
       }
-      output_auto_mode = command->enabled;
+      if (next_auto_mode != output_auto_mode)
+      {
+        if (next_auto_mode != 0U)
+        {
+          /*
+           * 手动切自动时仅无缝交接上下门锁。其他手动输出仍按新模式
+           * 全部清空，避免把泵、阀或加热等调试状态带入自动流程。
+           */
+          preserve_upper_lock = actual_output[AUTO_OUTPUT_UPPER_LOCK];
+          preserve_lower_lock = actual_output[AUTO_OUTPUT_LOWER_LOCK];
+        }
+        output_auto_mode = next_auto_mode;
+        /* 新模式从全关闭开始，防止恢复很早以前遗留的请求。 */
+        output_clear_source((output_auto_mode != 0U) ?
+                            APP_OUTPUT_SOURCE_AUTO : APP_OUTPUT_SOURCE_MANUAL);
+        if (output_auto_mode != 0U)
+        {
+          auto_request[AUTO_OUTPUT_UPPER_LOCK] = preserve_upper_lock;
+          auto_request[AUTO_OUTPUT_LOWER_LOCK] = preserve_lower_lock;
+        }
+        if (output_auto_mode == 0U)
+        {
+          output_clear_door_closer_requests();
+        }
+      }
       requested_auto_mode = output_auto_mode;
-      /* 新模式从全关闭开始，防止恢复很早以前遗留的请求。 */
-      output_clear_source((output_auto_mode != 0U) ?
-                          APP_OUTPUT_SOURCE_AUTO : APP_OUTPUT_SOURCE_MANUAL);
       tank_high_level_reached_tick = 0U;
+      tank_high_level_tracking = 0U;
       tank_high_level_protect_latched = 0U;
       break;
+    }
 
     case OUTPUT_COMMAND_CLEAR_SOURCE:
       output_clear_source(command->source);
@@ -516,7 +746,27 @@ static void output_process_command(const OutputCommand *command)
       output_clear_source(APP_OUTPUT_SOURCE_AUTO);
       output_clear_source(APP_OUTPUT_SOURCE_MANUAL);
       tank_high_level_reached_tick = 0U;
+      tank_high_level_tracking = 0U;
       tank_high_level_protect_latched = 0U;
+      break;
+
+    case OUTPUT_COMMAND_SET_TOP_EXHAUST_PERCENT:
+      top_exhaust_on_percent = (command->enabled <= 100U) ?
+                               command->enabled : 100U;
+      if ((actual_output[AUTO_OUTPUT_EXHAUST_FAN] != 0U) &&
+          (TaskComm485_IsRs485ActuatorMode() != 0U))
+      {
+        (void)TaskComm485_RequestSetPercent(RS485_STATION_TOP_EXHAUST_FAN,
+                                            top_exhaust_on_percent);
+      }
+      break;
+
+    case OUTPUT_COMMAND_START_AUTO_DOOR_CLOSE:
+      auto_door_close_start_internal();
+      break;
+
+    case OUTPUT_COMMAND_CANCEL_AUTO_DOOR_CLOSE:
+      auto_door_close_cancel_internal();
       break;
 
     case OUTPUT_COMMAND_SYNC:
@@ -598,6 +848,36 @@ HAL_StatusTypeDef TaskOutput_Request(AppOutputSource source,
   command.point = point;
   command.enabled = (enabled != 0U) ? 1U : 0U;
   return output_queue_command(&command);
+}
+
+HAL_StatusTypeDef TaskOutput_SetTopExhaustPercent(uint8_t percent)
+{
+  OutputCommand command = {0};
+
+  command.type = OUTPUT_COMMAND_SET_TOP_EXHAUST_PERCENT;
+  command.enabled = (percent <= 100U) ? percent : 100U;
+  return output_queue_command(&command);
+}
+
+HAL_StatusTypeDef TaskOutput_StartAutoDoorClose(void)
+{
+  OutputCommand command = {0};
+
+  if ((requested_auto_mode == 0U) ||
+      (AutoDevice_IsEmergencyStopped() != 0U))
+  {
+    return HAL_BUSY;
+  }
+  command.type = OUTPUT_COMMAND_START_AUTO_DOOR_CLOSE;
+  return output_queue_command(&command);
+}
+
+void TaskOutput_CancelAutoDoorClose(void)
+{
+  OutputCommand command = {0};
+
+  command.type = OUTPUT_COMMAND_CANCEL_AUTO_DOOR_CLOSE;
+  (void)output_queue_command(&command);
 }
 
 /* 读取互锁处理后的实际逻辑状态；无效点位固定返回0。 */
@@ -697,6 +977,8 @@ static void OutputTask(void *argument)
   dangerous_off_requested = 0U;
   tank_high_level_protect_latched = 0U;
   tank_high_level_reached_tick = 0U;
+  tank_high_level_tracking = 0U;
+  auto_door_close_cancel_internal();
   output_clear_source(APP_OUTPUT_SOURCE_AUTO);
   output_clear_source(APP_OUTPUT_SOURCE_MANUAL);
   auto_request[AUTO_OUTPUT_LIGHTING] = 1U;
@@ -744,6 +1026,8 @@ void TaskOutput_Create(void)
   dangerous_off_requested = 0U;
   tank_high_level_protect_latched = 0U;
   tank_high_level_reached_tick = 0U;
+  tank_high_level_tracking = 0U;
+  auto_door_close_cancel_internal();
   auto_request[AUTO_OUTPUT_LIGHTING] = 1U;
   manual_request[AUTO_OUTPUT_LIGHTING] = 1U;
   auto_request[AUTO_OUTPUT_UPPER_LOCK] = 1U;

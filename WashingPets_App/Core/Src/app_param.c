@@ -2,6 +2,7 @@
 
 #include "auto_device.h"
 #include "auto_process.h"
+#include "auto_stages.h"
 #include "rs485_config.h"
 #include "task_clean.h"
 #include "task_comm485.h"
@@ -16,6 +17,10 @@
 
 _Static_assert(sizeof(AppRecipe_t) == 84U,
                "AppRecipe_t layout changed; update host parameter protocol");
+_Static_assert(offsetof(AppRecipe_t, bath_cycle_count) == 24U,
+               "bath cycle count must retain the legacy time field offset");
+_Static_assert(offsetof(AppRecipe_t, bath_liquid_time_ms) == 36U,
+               "bath dosing time must reuse the legacy soak field offset");
 
 /*
  * 参数模块说明：
@@ -201,10 +206,23 @@ static void fill_self_clean_recipe_defaults(AppRecipe_t *recipe)
   recipe->self_clean_soak_time_ms = 5000U;
 }
 
+static uint32_t legacy_bath_cycles(uint32_t total_ms, uint32_t on_ms, uint32_t pause_ms)
+{
+  uint64_t period = (uint64_t)on_ms + pause_ms;
+  uint64_t cycles;
+
+  if ((total_ms == 0U) || (on_ms == 0U)) return 0U;
+  cycles = ((uint64_t)total_ms + period - 1U) / period;
+  return cycles > APP_RECIPE_MAX_BATH_CYCLES ? APP_RECIPE_MAX_BATH_CYCLES : (uint32_t)cycles;
+}
+
 static void copy_legacy_recipe(AppRecipe_t *dst, const AppRecipeLegacyV6_t *src)
 {
   memset(dst, 0, sizeof(*dst));
   memcpy(dst, src, sizeof(*src));
+  dst->bath_cycle_count = legacy_bath_cycles(src->bath_time_ms, src->bath_on_time_ms,
+                                            src->bath_pause_time_ms);
+  dst->bath_liquid_time_ms = APP_RECIPE_DEFAULT_BATH_LIQUID_MS;
   fill_self_clean_recipe_defaults(dst);
 }
 
@@ -238,11 +256,10 @@ uint8_t AppParam_ValidateRecipe(const AppRecipe_t *recipe)
   if (RECIPE_TIME_TOO_LARGE(spray_time_ms) ||
       RECIPE_TIME_TOO_LARGE(spray_on_time_ms) ||
       RECIPE_TIME_TOO_LARGE(spray_pause_time_ms) ||
-      RECIPE_TIME_TOO_LARGE(bath_time_ms) ||
       RECIPE_TIME_TOO_LARGE(bath_on_time_ms) ||
       RECIPE_TIME_TOO_LARGE(bath_pause_time_ms) ||
       RECIPE_TIME_TOO_LARGE(clean_time_ms) ||
-      RECIPE_TIME_TOO_LARGE(liquid_soak_time_ms) ||
+      (recipe->bath_liquid_time_ms > APP_RECIPE_MAX_BATH_LIQUID_MS) ||
       RECIPE_TIME_TOO_LARGE(dry_time_ms) ||
       RECIPE_TIME_TOO_LARGE(self_clean_top_time_ms) ||
       RECIPE_TIME_TOO_LARGE(self_clean_left_upper_time_ms) ||
@@ -256,6 +273,15 @@ uint8_t AppParam_ValidateRecipe(const AppRecipe_t *recipe)
     return 0U;
   }
 #undef RECIPE_TIME_TOO_LARGE
+  if ((recipe->bath_cycle_count > APP_RECIPE_MAX_BATH_CYCLES) ||
+      ((recipe->bath_cycle_count != 0U) &&
+       ((recipe->bath_on_time_ms == 0U) ||
+        ((uint64_t)recipe->bath_cycle_count * (recipe->bath_liquid_time_ms + recipe->bath_on_time_ms) +
+         (uint64_t)(recipe->bath_cycle_count - 1U) * recipe->bath_pause_time_ms +
+         BATH_STAGE_FIXED_MS > UINT32_MAX))))
+  {
+    return 0U;
+  }
   return 1U;
 }
 
@@ -263,7 +289,8 @@ static uint8_t validate_legacy_recipe(const AppRecipeLegacyV6_t *recipe)
 {
   AppRecipe_t current;
 
-  if (recipe == NULL)
+  if ((recipe == NULL) || (recipe->bath_time_ms > APP_RECIPE_MAX_TIME_MS) ||
+      (recipe->liquid_soak_time_ms > APP_RECIPE_MAX_TIME_MS))
   {
     return 0U;
   }
@@ -348,10 +375,10 @@ static void load_defaults(void)
   default_recipe.spray_time_ms = 60000U;//冲洗总时间
   default_recipe.spray_on_time_ms = 20000U;//冲洗出水时间
   default_recipe.spray_pause_time_ms = 5000U;//冲洗暂停时间
-  default_recipe.bath_time_ms = 120000U;//沐浴总时间
+  default_recipe.bath_cycle_count = 5U;//沐浴循环次数
   default_recipe.bath_on_time_ms = 20000U;//沐浴出水时间
   default_recipe.bath_pause_time_ms = 5000U;//沐浴暂停时间
-  default_recipe.liquid_soak_time_ms = 5000U;//洗剂浸润时间
+  default_recipe.bath_liquid_time_ms = APP_RECIPE_DEFAULT_BATH_LIQUID_MS;//每轮沐浴加液时间
   default_recipe.clean_time_ms = 60000U;//清洗总时间
   default_recipe.dry_time_ms = 300000U;//烘干时间
   default_recipe.self_clean_top_time_ms = 15000U;//自清洁顶部清洁时间
@@ -395,6 +422,36 @@ static uint8_t flash_param_is_valid(const AppParam_t *param)
       return 0U;
     }
   }
+  return 1U;
+}
+
+/* V7 used total milliseconds; V8 used cycles but still had fixed 3s dosing. */
+static uint8_t migrate_legacy_v7_v8(const AppParam_t *legacy)
+{
+  if ((legacy->magic != APP_PARAM_MAGIC) ||
+      ((legacy->version != 7U) && (legacy->version != 8U)) ||
+      (legacy->length != sizeof(*legacy)) || (legacy->crc32 != param_crc32(legacy)))
+  {
+    return 0U;
+  }
+  memcpy(&param_write_image, legacy, sizeof(param_write_image));
+  for (uint8_t index = 0U; index < APP_RECIPE_COUNT; ++index)
+  {
+    AppRecipe_t *recipe = &param_write_image.recipes[index];
+    if (recipe->bath_liquid_time_ms > APP_RECIPE_MAX_TIME_MS) return 0U;
+    if (legacy->version == 7U)
+    {
+      if (recipe->bath_cycle_count > APP_RECIPE_MAX_TIME_MS) return 0U;
+      recipe->bath_cycle_count = legacy_bath_cycles(recipe->bath_cycle_count,
+                                                  recipe->bath_on_time_ms,
+                                                  recipe->bath_pause_time_ms);
+    }
+    recipe->bath_liquid_time_ms = APP_RECIPE_DEFAULT_BATH_LIQUID_MS;
+  }
+  param_write_image.version = APP_PARAM_VERSION;
+  param_write_image.crc32 = param_crc32(&param_write_image);
+  if (flash_param_is_valid(&param_write_image) == 0U) return 0U;
+  memcpy(&app_param, &param_write_image, sizeof(app_param));
   return 1U;
 }
 
@@ -526,6 +583,10 @@ void AppParam_Init(void)
   if (flash_param_is_valid(flash_param) != 0U)
   {
     memcpy(&app_param, flash_param, sizeof(app_param));
+  }
+  else if (migrate_legacy_v7_v8(flash_param) != 0U)
+  {
+    AppParam_RequestSave();
   }
   else if (migrate_legacy_v6((const AppParamLegacyV6_t *)flash_param) != 0U)
   {

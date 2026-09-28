@@ -8,7 +8,7 @@
 #define RS485_STATION_RIGHT_FAN         11U /* 右风机 */
 #define RS485_STATION_BOTTOM_FAN        12U /* 底部风机 */
 #define RS485_STATION_TOP_EXHAUST_FAN   13U /* 顶部排风扇 */
-#define RS485_TOP_EXHAUST_PRESENT       0U  /* 顶部排风扇在位开关：0=未接（屏蔽巡检与上电清零），1=已接 */
+#define RS485_TOP_EXHAUST_PRESENT       1U  /* 顶部排风扇在位开关：0=未接（屏蔽巡检与上电清零），1=已接 */
 #define RS485_STATION_LEFT_HEATER       14U /* 左加热棒 */
 #define RS485_STATION_RIGHT_HEATER      15U /* 右加热棒 */
 #define RS485_STATION_BOTTOM_HEATER     16U /* 底部加热棒 */

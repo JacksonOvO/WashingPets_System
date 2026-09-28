@@ -4,6 +4,7 @@
 #include "auto_device.h"
 #include "rs485_config.h"
 #include "task_comm485.h"
+#include "task_output.h"
 #include "task_water_tank.h"
 
 #define DRY_HEATER_FULL_PERCENT         100U
@@ -11,6 +12,7 @@
 #define DRY_TEMP_CONTROL_INTERVAL_MS   5000U
 #define DRY_FAN_START_PERCENT            50U
 #define DRY_FAN_FULL_PERCENT            100U
+#define DRY_TOP_EXHAUST_PERCENT           70U
 #define DRY_DEFAULT_TARGET_X10           335
 
 static uint32_t phase_tick;
@@ -61,14 +63,19 @@ static HAL_StatusTypeDef set_fans(uint8_t percent)
 
 static HAL_StatusTypeDef set_exhaust_fan(uint8_t on)
 {
-  uint8_t percent = (on != 0U) ? DRY_FAN_FULL_PERCENT : 0U;
-
-  if (TaskComm485_RequestSetPercent(RS485_STATION_TOP_EXHAUST_FAN, percent) != HAL_OK)
+  if ((on != 0U) &&
+      (TaskOutput_SetTopExhaustPercent(DRY_TOP_EXHAUST_PERCENT) != HAL_OK))
   {
     AutoDevice_SetFault(AUTO_FAULT_485_TOP_EXHAUST_COMM);
     return HAL_ERROR;
   }
   if (AutoDevice_SetOutput(AUTO_OUTPUT_EXHAUST_FAN, on) != HAL_OK)
+  {
+    AutoDevice_SetFault(AUTO_FAULT_OUTPUT_COMMAND_FAILED);
+    return HAL_ERROR;
+  }
+  if ((on == 0U) &&
+      (TaskOutput_SetTopExhaustPercent(DRY_FAN_FULL_PERCENT) != HAL_OK))
   {
     AutoDevice_SetFault(AUTO_FAULT_OUTPUT_COMMAND_FAILED);
     return HAL_ERROR;

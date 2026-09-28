@@ -19,7 +19,11 @@
 #define PARAM_FLASH_SIZE     0x20000U
 
 #define APP_PARAM_MAGIC      0x4150524DU  /* "APRM" */
-#define APP_PARAM_VERSION    0x0007U
+#define APP_PARAM_VERSION    0x0009U
+#define APP_RECIPE_PROTOCOL_VERSION 3U
+#define APP_RECIPE_DEFAULT_BATH_LIQUID_MS 3000U
+#define APP_RECIPE_MAX_BATH_LIQUID_MS 60000U
+#define APP_RECIPE_MAX_BATH_CYCLES 100U
 
 /* 四种基础动物工艺配方，由上位机按毛长和体型选择。 */
 typedef enum
@@ -49,10 +53,10 @@ typedef struct
   uint32_t spray_time_ms;                /* 冲洗总时间 */
   uint32_t spray_on_time_ms;             /* 冲洗出水时间 */
   uint32_t spray_pause_time_ms;          /* 冲洗暂停时间 */
-  uint32_t bath_time_ms;                 /* 沐浴总时间 */
+  uint32_t bath_cycle_count;             /* 沐浴循环次数，0跳过，最大100 */
   uint32_t bath_on_time_ms;              /* 沐浴出水时间 */
   uint32_t bath_pause_time_ms;           /* 沐浴暂停时间 */
-  uint32_t liquid_soak_time_ms;          /* 洗剂浸润时间 */
+  uint32_t bath_liquid_time_ms;          /* 每轮沐浴加液时间，0跳过投液，默认3000ms */
   uint32_t clean_time_ms;                /* 清洗总时间 */
   uint32_t dry_time_ms;                  /* 烘干时间 */
   uint32_t self_clean_top_time_ms;         /* 自清洁顶部清洁时间 */

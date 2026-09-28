@@ -3,6 +3,9 @@
 
 #include "auto_device.h"
 
+#define OUTPUT_TANK_HIGH_STOP_DELAY_MS 10000U
+uint8_t TaskOutput_IsTankHighStopActive(void);
+
 typedef enum
 {
   APP_OUTPUT_SOURCE_AUTO = 0,
@@ -21,6 +24,13 @@ uint8_t TaskOutput_IsAutoMode(void);
 HAL_StatusTypeDef TaskOutput_Request(AppOutputSource source,
                                      AutoOutputPoint point,
                                      uint8_t enabled);
+
+/* 设置顶部13号风机开启时的485功率；关闭输出始终发送0%。 */
+HAL_StatusTypeDef TaskOutput_SetTopExhaustPercent(uint8_t percent);
+
+/* 自动流程专用：先用OUT38同步闭门器状态，再周期脉冲OUT30直到门磁到位。 */
+HAL_StatusTypeDef TaskOutput_StartAutoDoorClose(void);
+void TaskOutput_CancelAutoDoorClose(void);
 
 /* 读取经过模式仲裁和安全互锁后的实际逻辑输出。 */
 uint8_t TaskOutput_GetActual(AutoOutputPoint point);

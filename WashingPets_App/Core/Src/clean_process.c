@@ -261,8 +261,23 @@ static AppFlowStepResult start_liquid_spray(AutoOutputPoint liquid_valve,
   set_all_self_clean_valves(1U);
   (void)AutoDevice_SetOutput(liquid_valve, 1U);
   (void)AutoDevice_SetBoosterPumpPercent(recipe->self_clean_liquid_pressure_x10);
-  (void)AutoDevice_SetOutput(AUTO_OUTPUT_SCREW_PUMP, 1U);
-  (void)AutoDevice_SetBoosterPumpRunning(1U);
+  /* 先确认增压泵命令被接受，避免缺水或互锁时蠕动泵单独消耗药液。 */
+  if (AutoDevice_SetBoosterPumpRunning(1U) != HAL_OK)
+  {
+    (void)AutoDevice_SetOutput(AUTO_OUTPUT_SCREW_PUMP, 0U);
+    (void)AutoDevice_SetOutput(liquid_valve, 0U);
+    set_all_self_clean_valves(0U);
+    AutoDevice_SetFault(AUTO_FAULT_OUTPUT_COMMAND_FAILED);
+    return APP_FLOW_STEP_FAIL;
+  }
+  if (AutoDevice_SetOutput(AUTO_OUTPUT_SCREW_PUMP, 1U) != HAL_OK)
+  {
+    (void)AutoDevice_SetBoosterPumpRunning(0U);
+    (void)AutoDevice_SetOutput(liquid_valve, 0U);
+    set_all_self_clean_valves(0U);
+    AutoDevice_SetFault(AUTO_FAULT_OUTPUT_COMMAND_FAILED);
+    return APP_FLOW_STEP_FAIL;
+  }
   phase_tick = AutoDevice_GetProcessTick();
   return APP_FLOW_STEP_DONE;
 }
