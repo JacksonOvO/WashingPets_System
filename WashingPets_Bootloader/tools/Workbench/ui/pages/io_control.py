@@ -48,7 +48,6 @@ class IOControlPage(Gtk.Box):
         rg.add_item(labeled(tr("io.value"), self.rs485_entry))
         self.act_check = Gtk.CheckButton(label=tr("io.gpio_actuator"))
         self.act_check.connect("toggled", self._act_changed)
-        rg.add_item(labeled(tr("io.mode"), self.act_check))
         self._btn_start_pump = Gtk.Button(label=tr("io.start_pump"))
         self._btn_start_pump.get_style_context().add_class("start")
         self._btn_start_pump.connect("clicked", lambda _: self._send("booster", start=True))
@@ -83,7 +82,12 @@ class IOControlPage(Gtk.Box):
 
         og = ResponsiveGrid(min_child_width=250, max_columns=4,
                             column_spacing=8, row_spacing=8)
-        for oid in range(1, 41):
+        for oid in range(1, len(core.OUTPUT_NAMES) + 1):
+            if oid == 40:
+                self._out_card.pack_start(og, False, False, 0)
+                self._out_card.pack_start(Gtk.Label(label="MAGLOCK1–6", xalign=0), False, False, 0)
+                og = ResponsiveGrid(min_child_width=250, max_columns=4,
+                                    column_spacing=8, row_spacing=8)
             name = core.map_name(core.OUTPUT_NAMES, oid - 1)
             item = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
             item.get_style_context().add_class("output-item")
@@ -106,7 +110,12 @@ class IOControlPage(Gtk.Box):
         self.input_dots = {}
         ig = ResponsiveGrid(min_child_width=200, max_columns=4,
                             column_spacing=8, row_spacing=8)
-        for iid in range(1, 20):
+        for iid in range(1, len(core.INPUT_NAMES) + 1):
+            if iid == core.INPUT_GPIO_COUNT + 1:
+                self._in_card.pack_start(ig, False, False, 0)
+                self._in_card.pack_start(Gtk.Label(label="独立关门到位 PF15 / PG0", xalign=0), False, False, 8)
+                ig = ResponsiveGrid(min_child_width=200, max_columns=4,
+                                    column_spacing=8, row_spacing=8)
             name = core.map_name(core.INPUT_NAMES, iid - 1)
             item = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
             item.get_style_context().add_class("io-item")
@@ -177,7 +186,7 @@ class IOControlPage(Gtk.Box):
         else:
             self.io_status.set_text(tr("io.no_status"))
 
-        for iid in range(1, 20):
+        for iid in range(1, len(core.INPUT_NAMES) + 1):
             dot = self.input_dots.get(iid)
             if dot:
                 on = (iid - 1) < len(inputs) and inputs[iid - 1]
@@ -188,7 +197,7 @@ class IOControlPage(Gtk.Box):
                 ctx.add_class("dot-on" if on else "dot-off")
 
         self._updating_out = True
-        for oid in range(1, 41):
+        for oid in range(1, len(core.OUTPUT_NAMES) + 1):
             sw = self.switches.get(oid)
             if sw:
                 on = (oid - 1) < len(outputs) and outputs[oid - 1]

@@ -10,16 +10,18 @@
  * 支持的功能码：
  * - 0x03：读取保持寄存器；
  * - 0x06：写单个保持寄存器。
+ * - 0x10：写多个保持寄存器（QX-DO24）。
  *
  * 本文件只负责可控硅设备的协议收发和数据检查，不负责创建线程。
- * USART1/RS485 总线由 task_comm485.c 统一管理，避免多个线程同时访问总线。
+ * USART3/RS485 总线由 task_comm485.c 统一管理，避免多个线程同时访问总线。
  */
 #define THYRISTOR_FUNC_READ            0x03U
 #define THYRISTOR_FUNC_WRITE           0x06U
+#define THYRISTOR_FUNC_WRITE_MULTIPLE  0x10U
 #define THYRISTOR_RESPONSE_TIMEOUT_MS  400U
 #define THYRISTOR_TX_COMPLETE_TIMEOUT_MS 20U
 
-/* 保存可控硅驱动使用的 UART，当前工程由 task_comm485.c 传入 USART1。 */
+/* 保存驱动使用的 UART，当前工程由 task_comm485.c 传入 USART3。 */
 static UART_HandleTypeDef *thyristor_uart;
 
 /*
@@ -84,23 +86,25 @@ static uint8_t crc_is_valid(const uint8_t *frame, uint16_t length)
 /*
  * 完成一次 Modbus RTU 请求与响应交换。
  *
- * request 固定为 8 字节，格式为：
+ * 0x03/0x06 请求为8字节，格式为：
  *   站号 功能码 地址高 地址低 数据高 数据低 CRC低 CRC高
  *
  * 对于 0x03 读取命令，“数据高、数据低”表示读取寄存器数量；
  * 对于 0x06 写命令，“数据高、数据低”表示写入寄存器的数值。
+ * 0x10请求另含字节数和数据，使用request_length指定帧长。
  *
  * 函数处理流程：
  * 1. 清除 UART 中上一次通信残留的溢出标志和接收数据；
  * 2. 将 RS485 芯片切换到发送模式；
- * 3. 发送完整的 8 字节请求帧；
+ * 3. 发送完整请求帧；
  * 4. 等待最后一个停止位发送完成，然后切换到接收模式；
  * 5. 寻找正确的设备站号和功能码；
  * 6. 根据功能码接收剩余响应数据；
  * 7. 检查 CRC 和 Modbus 异常响应。
  */
-static ThyristorStatus exchange(const uint8_t request[8], uint8_t *response,
-                                uint16_t *response_length)
+static ThyristorStatus exchange(const uint8_t *request, uint16_t request_length,
+                                uint8_t *response, uint16_t response_capacity,
+                                uint16_t *response_length, uint8_t qx_exception)
 {
   uint8_t byte;
   uint8_t header_index = 0U;
@@ -117,12 +121,12 @@ static ThyristorStatus exchange(const uint8_t request[8], uint8_t *response,
   __HAL_UART_FLUSH_DRREGISTER(thyristor_uart);
 
   /* 先输出调试帧，再通过 PC0 将 RS485 芯片切换到发送状态。 */
-  Thyristor_OnTransmit(request, 8U);
+  Thyristor_OnTransmit(request, request_length);
   Thyristor_SetTransmitMode();
   HAL_Delay(1U);
 
-  /* 发送固定长度的 Modbus RTU 请求帧。 */
-  if (HAL_UART_Transmit(thyristor_uart, (uint8_t *)request, 8U,
+  /* 发送完整 Modbus RTU 请求帧。 */
+  if (HAL_UART_Transmit(thyristor_uart, (uint8_t *)request, request_length,
                         THYRISTOR_RESPONSE_TIMEOUT_MS) != HAL_OK)
   {
     Thyristor_SetReceiveMode();
@@ -205,7 +209,8 @@ static ThyristorStatus exchange(const uint8_t request[8], uint8_t *response,
     /* 异常响应共 5 字节，已经收到 3 字节，还需接收两个 CRC 字节。 */
     remaining = 2U;
   }
-  else if (response[1] == THYRISTOR_FUNC_WRITE)
+  else if ((response[1] == THYRISTOR_FUNC_WRITE) ||
+           (response[1] == THYRISTOR_FUNC_WRITE_MULTIPLE))
   {
     /*
      * 0x06 正常响应会原样返回请求帧。
@@ -213,17 +218,8 @@ static ThyristorStatus exchange(const uint8_t request[8], uint8_t *response,
      */
     remaining = 5U;
   }
-    else if (response[1] == THYRISTOR_FUNC_READ)
-    {
-      /*
-       * 当前可控硅读接口一次只读取一个 16 位寄存器，
-       * 所以有效数据最多只能是 2 字节。
-       */
-      if (response[2] > 2U)
-      {
-        Thyristor_OnReceive(response, 3U);
-        return THYRISTOR_ERROR_RESPONSE;
-      }
+  else if (response[1] == THYRISTOR_FUNC_READ)
+  {
     remaining = (uint16_t)response[2] + 2U;
   }
   else
@@ -232,6 +228,10 @@ static ThyristorStatus exchange(const uint8_t request[8], uint8_t *response,
     return THYRISTOR_ERROR_RESPONSE;
   }
 
+  if ((3U + remaining) > response_capacity)
+  {
+    return THYRISTOR_ERROR_RESPONSE;
+  }
   /* 接收数据区以及帧末尾的 CRC 低、高字节。 */
   if (HAL_UART_Receive(thyristor_uart, &response[3], remaining,
                        THYRISTOR_RESPONSE_TIMEOUT_MS) != HAL_OK)
@@ -239,6 +239,19 @@ static ThyristorStatus exchange(const uint8_t request[8], uint8_t *response,
     return THYRISTOR_ERROR_TIMEOUT;
   }
   *response_length = (uint16_t)(3U + remaining);
+  /* QX documents [station, function|0x80, 1, error, CRClo, CRChi].
+   * Prefer a valid standard 5-byte exception; only extend an invalid one. */
+  if ((qx_exception != 0U) && ((response[1] & 0x80U) != 0U) &&
+      (response[2] == 1U) && (crc_is_valid(response, *response_length) == 0U))
+  {
+    if ((response_capacity < 6U) ||
+        (HAL_UART_Receive(thyristor_uart, &response[5], 1U,
+                          THYRISTOR_RESPONSE_TIMEOUT_MS) != HAL_OK))
+    {
+      return THYRISTOR_ERROR_CRC;
+    }
+    *response_length = 6U;
+  }
   Thyristor_OnReceive(response, *response_length);
 
   /* CRC 错误时禁止继续使用响应中的寄存器数据。 */
@@ -295,7 +308,8 @@ ThyristorStatus Thyristor_WriteRegister(uint8_t station, uint16_t reg,
   append_crc(request, 6U);
 
   /* 发送请求并等待设备回传写入确认帧。 */
-  status = exchange(request, response, &response_length);
+  status = exchange(request, sizeof(request), response, sizeof(response),
+                    &response_length, 0U);
   if (status != THYRISTOR_OK)
   {
     return status;
@@ -340,7 +354,8 @@ ThyristorStatus Thyristor_ReadRegister(uint8_t station, uint16_t reg,
   append_crc(request, 6U);
 
   /* 发送请求，并完成超时、CRC和异常响应检查。 */
-  status = exchange(request, response, &response_length);
+  status = exchange(request, sizeof(request), response, sizeof(response),
+                    &response_length, 0U);
   if (status != THYRISTOR_OK)
   {
     return status;
@@ -353,6 +368,69 @@ ThyristorStatus Thyristor_ReadRegister(uint8_t station, uint16_t reg,
 
   /* Modbus 寄存器数据为高字节在前，将两个字节合成为 uint16_t。 */
   *value = ((uint16_t)response[3] << 8U) | response[4];
+  return THYRISTOR_OK;
+}
+
+ThyristorStatus Thyristor_WriteRegisters(uint8_t station, uint16_t reg,
+                                       const uint16_t *values, uint16_t count)
+{
+  uint8_t request[9U + 2U * THYRISTOR_MAX_REGISTERS];
+  uint8_t response[8];
+  uint16_t length;
+  ThyristorStatus status;
+  if ((station == 0U) || (station > 247U) || (values == NULL) ||
+      (count == 0U) || (count > THYRISTOR_MAX_REGISTERS) ||
+      ((uint32_t)reg + count > 0x10000UL))
+  {
+    return THYRISTOR_ERROR_PARAM;
+  }
+  request[0] = station;
+  request[1] = THYRISTOR_FUNC_WRITE_MULTIPLE;
+  request[2] = (uint8_t)(reg >> 8U);
+  request[3] = (uint8_t)reg;
+  request[4] = (uint8_t)(count >> 8U);
+  request[5] = (uint8_t)count;
+  request[6] = (uint8_t)(2U * count);
+  for (uint16_t i = 0U; i < count; ++i)
+  {
+    request[7U + 2U * i] = (uint8_t)(values[i] >> 8U);
+    request[8U + 2U * i] = (uint8_t)values[i];
+  }
+  append_crc(request, (uint16_t)(7U + 2U * count));
+  status = exchange(request, (uint16_t)(9U + 2U * count), response,
+                    sizeof(response), &length, 1U);
+  if (status != THYRISTOR_OK) return status;
+  return ((length == 8U) && (memcmp(request, response, 6U) == 0)) ?
+         THYRISTOR_OK : THYRISTOR_ERROR_RESPONSE;
+}
+
+ThyristorStatus Thyristor_ReadRegisters(uint8_t station, uint16_t reg,
+                                      uint16_t *values, uint16_t count)
+{
+  uint8_t request[8];
+  uint8_t response[5U + 2U * THYRISTOR_MAX_REGISTERS];
+  uint16_t length;
+  ThyristorStatus status;
+  if ((station == 0U) || (station > 247U) || (values == NULL) ||
+      (count == 0U) || (count > THYRISTOR_MAX_REGISTERS) ||
+      ((uint32_t)reg + count > 0x10000UL))
+  {
+    return THYRISTOR_ERROR_PARAM;
+  }
+  request[0] = station;
+  request[1] = THYRISTOR_FUNC_READ;
+  request[2] = (uint8_t)(reg >> 8U);
+  request[3] = (uint8_t)reg;
+  request[4] = (uint8_t)(count >> 8U);
+  request[5] = (uint8_t)count;
+  append_crc(request, 6U);
+  status = exchange(request, sizeof(request), response, sizeof(response),
+                    &length, 1U);
+  if (status != THYRISTOR_OK) return status;
+  if ((length != 5U + 2U * count) || (response[2] != 2U * count))
+    return THYRISTOR_ERROR_RESPONSE;
+  for (uint16_t i = 0U; i < count; ++i)
+    values[i] = ((uint16_t)response[3U + 2U * i] << 8U) | response[4U + 2U * i];
   return THYRISTOR_OK;
 }
 

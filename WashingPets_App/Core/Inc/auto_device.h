@@ -27,13 +27,6 @@
 #define AUTO_LOWER_DOOR_SENSOR_BYPASS  0U
 
 /*
- * 上下门光幕临时旁路开关：
- * 1U：光幕未安装，两路光幕固定视为未触发；
- * 0U：光幕安装完成，读取真实上下门光幕输入。
- */
-#define AUTO_LIGHT_CURTAIN_SENSOR_BYPASS  1U
-
-/*
  * RS485流量阀临时旁路开关：
  * 0U：未安装流量阀，不发送控制命令，自动流程直接跳过相关等待。
  * 1U：安装流量阀后启用真实控制和流程等待。
@@ -52,72 +45,85 @@
 
 typedef enum
 {
-  AUTO_INPUT_DISINFECTANT_LOW = 0, /* PA3：消毒液低液位。 */
-  AUTO_INPUT_BATH_LIQUID_LOW,     /* PA4：沐浴液低液位。 */
-  AUTO_INPUT_FRAGRANCE_LOW,       /* PA5：芬香液低液位。 */
-  AUTO_INPUT_SOFTENER_LOW,        /* PA6：柔顺液低液位。 */
-  AUTO_INPUT_DEODORIZER_LOW,      /* PA7：除螨液低液位。 */
-  AUTO_INPUT_CONDITIONER_LOW,     /* PC4：护毛素低液位。 */
-  AUTO_INPUT_TANK_LOW,            /* PC5：蓄水箱下液位。 */
-  AUTO_INPUT_TANK_MIDDLE,         /* PB0：蓄水箱中液位。 */
-  AUTO_INPUT_TANK_HIGH,           /* PB1：蓄水箱上液位。 */
-  AUTO_INPUT_EMERGENCY_STOP,      /* PB2：急停开关。 */
-  AUTO_INPUT_DRAIN_PIPE_LEVEL,    /* PF12：排水管液位。 */
-  AUTO_INPUT_UPPER_LIGHT_CURTAIN, /* PF13：上门光幕。 */
-  AUTO_INPUT_LOWER_LIGHT_CURTAIN, /* PF14：下门光幕。 */
-  AUTO_INPUT_UPPER_DOOR_CLOSED,   /* PF15：上门关闭到位。 */
-  AUTO_INPUT_LOWER_DOOR_CLOSED,   /* PG0：下门关闭到位。 */
-  AUTO_INPUT_LEFT_LOCK_CLOSED,    /* PG1：左电插锁到位。 */
-  AUTO_INPUT_RIGHT_LOCK_CLOSED,   /* PE7：右电插锁到位。 */
-  AUTO_INPUT_REAR_LOCK_1_CLOSED,  /* PE8：后电插锁1到位。 */
-  AUTO_INPUT_REAR_LOCK_2_CLOSED,  /* PE9：后电插锁2到位。 */
-  AUTO_INPUT_COUNT
+  AUTO_INPUT_BATH_LIQUID_LOW = 0,          /* PA3: IN1: 沐浴液1低液位 */
+  AUTO_INPUT_FRAGRANCE_LOW = 1,            /* PA4: IN2: 沐浴液2低液位 */
+  AUTO_INPUT_SOFTENER_LOW = 2,             /* PA5: IN3: 沐浴液3低液位 */
+  AUTO_INPUT_DEODORIZER_LOW = 3,           /* PA6: IN4: 沐浴液4低液位 */
+  AUTO_INPUT_CLEAN_LIQUID_LOW = 4,         /* PA7: IN5: 清洁液低液位 */
+  AUTO_INPUT_DISINFECTANT_LOW = 5,         /* PC4: IN6: 消毒液低液位 */
+  AUTO_INPUT_TANK_LOW = 6,                 /* PC5: IN7: 水箱低液位 */
+  AUTO_INPUT_TANK_MIDDLE = 7,              /* PB0: IN8: 水箱中液位 */
+  AUTO_INPUT_TANK_HIGH = 8,                /* PB1: IN9: 水箱高液位 */
+  AUTO_INPUT_EMERGENCY_STOP = 9,           /* PB2: IN10: 急停开关 */
+  AUTO_INPUT_UPPER_DOOR_OPEN = 10,         /* PF11: IN11: 上门开门到位 */
+  AUTO_INPUT_SPARE_1 = 11,                 /* PF12: IN12: 备用1 */
+  AUTO_INPUT_SPARE_2 = 12,                 /* PF13: IN13: 备用2 */
+  AUTO_INPUT_SPARE_3 = 13,                 /* PF14: IN14: 备用3 */
+  AUTO_INPUT_SPARE_4 = 14,                 /* PE10: IN15: 备用4 */
+  AUTO_INPUT_SPARE_5 = 15,                 /* PE11: IN16: 备用5 */
+  AUTO_INPUT_SPARE_6 = 16,                 /* PE12: IN17: 备用6 */
+  AUTO_INPUT_SPARE_7 = 17,                 /* PE13: IN18: 备用7 */
+  AUTO_INPUT_SPARE_8 = 18,                 /* PE14: IN19: 备用8 */
+  AUTO_INPUT_UPPER_DOOR_CLOSED = 19,       /* PF15: 独立上门关门到位 (bit19) */
+  AUTO_INPUT_LOWER_DOOR_CLOSED = 20,       /* PG0: 独立下门关门到位 (bit20) */
+  AUTO_INPUT_COUNT = 21
 } AutoInputPoint;
+
+#define AUTO_INPUT_FIRST AUTO_INPUT_BATH_LIQUID_LOW
+#define AUTO_INPUT_GPIO_COUNT 19U
 
 typedef enum
 {
-  AUTO_OUTPUT_EXHAUST_FAN= 1,               /* OUT1-PB12：排气扇。 */
-  AUTO_OUTPUT_OXYGEN_MACHINE,               /* OUT2-PB13：制氧机。 */
-  AUTO_OUTPUT_AIR_FRESHENER,                /* OUT3-PB14：空气清新剂。 */
-  AUTO_OUTPUT_MANUAL_CLEAN_VALVE,           /* OUT4-PB15：手动清洁电磁阀。 */
-  AUTO_OUTPUT_EXHAUST_UV_LAMP,               /* OUT5-PD8：排风紫外线灯。 */
-  AUTO_OUTPUT_WATER_HEATER,                 /* OUT6-PD9：热水器。 */
-  AUTO_OUTPUT_TAP_WATER_VALVE,              /* OUT7-PD10：自来水阀。 */
-  AUTO_OUTPUT_SCREW_PUMP,                   /* OUT8-PD11：螺动泵。 */
-  AUTO_OUTPUT_SHOWER_UPPER,                 /* OUT9-PD12：淋浴阀上。 */
-  AUTO_OUTPUT_SHOWER_MIDDLE,                /* OUT10-PD13：淋浴阀中。 */
-  AUTO_OUTPUT_SHOWER_LOWER,                 /* OUT11-PB4：淋浴阀下。 */
-  AUTO_OUTPUT_SHOWER_REAR,                  /* OUT12-PB5：淋浴阀后。 */
-  AUTO_OUTPUT_BATH_LIQUID_VALVE,            /* OUT13-PB6：沐浴液阀。 */
-  AUTO_OUTPUT_FRAGRANCE_VALVE,              /* OUT14-PB7：芬香液阀。 */
-  AUTO_OUTPUT_SOFTENER_VALVE,               /* OUT15-PB8：柔顺液阀。 */
-  AUTO_OUTPUT_DEODORIZER_VALVE,             /* OUT16-PB9：除螨液阀。 */
-  AUTO_OUTPUT_CONDITIONER_VALVE,            /* OUT17-PE0：清洁液阀。 */
-  AUTO_OUTPUT_DISINFECTANT_VALVE,           /* OUT18-PE1：消毒液阀。 */
-  AUTO_OUTPUT_UV_LAMP,                       /* OUT19-PB3：紫外线灯。 */
-  AUTO_OUTPUT_SELF_CLEAN_TOP_VALVE,         /* OUT20-PE2：自清洁顶部阀。 */
-  AUTO_OUTPUT_SELF_CLEAN_FRONT_UPPER_VALVE, /* OUT21-PE3：自清洁前侧上阀。 */
-  AUTO_OUTPUT_SELF_CLEAN_FRONT_LOWER_VALVE, /* OUT22-PE4：自清洁前侧下阀。 */
-  AUTO_OUTPUT_SELF_CLEAN_REAR_VALVE,        /* OUT23-PE5：自清洁后端阀。 */
-  AUTO_OUTPUT_BYPASS_VALVE,                 /* OUT24-PE6：旁通阀。 */
-  AUTO_OUTPUT_OZONE,                        /* OUT25-PC13：臭氧。 */
-  AUTO_OUTPUT_LIGHTING,                     /* OUT26-PC14：舱内照明，低电平有效，默认开启。 */
-  AUTO_OUTPUT_FRONT_DOOR_LIGHT,             /* OUT27-PC15：正门灯带。 */
-  AUTO_OUTPUT_LOGO_LIGHT,                   /* OUT28-PF0：LOGO发光板。 */
-  AUTO_OUTPUT_BOOSTER_PUMP_RUN,             /* OUT29-PF1：增压泵GPIO启停。 */
-  AUTO_OUTPUT_DOOR_CLOSE,                  /* OUT30-PF2：自动关门输出。 */
-  AUTO_OUTPUT_DOOR_STOP,                   /* OUT31-PF3：关门停止输出。 */
-  AUTO_OUTPUT_UPPER_LOCK,                   /* OUT32-PF4：上电磁锁。 */
-  AUTO_OUTPUT_LOWER_LOCK,                   /* OUT33-PF5：下电磁锁。 */
-  AUTO_OUTPUT_LEFT_LOCK,                    /* OUT34-PF6：左电插锁。 */
-  AUTO_OUTPUT_RIGHT_LOCK,                   /* OUT35-PF7：右电插锁。 */
-  AUTO_OUTPUT_REAR_LOCK_1,                  /* OUT36-PF8：后电插锁1。 */
-  AUTO_OUTPUT_REAR_LOCK_2,                  /* OUT37-PF9：后电插锁2。 */
-  AUTO_OUTPUT_DOOR_OPEN,                    /* OUT38-PF10：自动开门输出。 */
-  AUTO_OUTPUT_STANDBY2_VALVE,               /* OUT39-PC0：热水器阀。 */
-  AUTO_OUTPUT_MAIN_POWER,                   /* OUT40-PC1：主板电源控制。 */
-  AUTO_OUTPUT_COUNT
+  AUTO_OUTPUT_OXYGEN_MACHINE = 1,       /* OUT1-PB12 */
+  AUTO_OUTPUT_EXHAUST_UV_LAMP = 2,       /* OUT2-PB13 */
+  AUTO_OUTPUT_UV_LAMP = 3,              /* OUT3-PB14 */
+  AUTO_OUTPUT_BLOWER = 4,               /* OUT4-PB15: air and heat together */
+  AUTO_OUTPUT_SWING_MOTOR = 5,          /* OUT5-PD8 */
+  AUTO_OUTPUT_FLOOR_LIFT = 6,           /* OUT6-PD9 */
+  AUTO_OUTPUT_MAIN_POWER = 7,           /* OUT7-PD10 */
+  AUTO_OUTPUT_AIR_FRESHENER = 8,         /* OUT8-PD11 */
+  AUTO_OUTPUT_BATH_PUMP = 9,            /* OUT9-PD12 */
+  AUTO_OUTPUT_SELF_CLEAN_PUMP = 10,     /* OUT10-PD13 */
+  AUTO_OUTPUT_LIGHTING = 11,           /* OUT11-PB4 */
+  AUTO_OUTPUT_FRONT_DOOR_LIGHT = 12,    /* OUT12-PB5 */
+  AUTO_OUTPUT_DOOR_OPEN = 13,           /* OUT13-PB6 */
+  AUTO_OUTPUT_DOOR_CLOSE = 14,          /* OUT14-PB7 */
+  AUTO_OUTPUT_DOOR_STOP = 15,           /* OUT15-PB8 */
+  AUTO_OUTPUT_MANUAL_CLEAN_VALVE = 16,  /* OUT16-PB9 */
+  AUTO_OUTPUT_TAP_WATER_VALVE = 17,     /* OUT17-PE0 */
+  AUTO_OUTPUT_STANDBY2_VALVE = 18,      /* OUT18-PE1 */
+  AUTO_OUTPUT_BYPASS_VALVE = 19,        /* OUT19-PB3 */
+  AUTO_OUTPUT_SHOWER_MIDDLE = 20,       /* OUT20-PE2 */
+  AUTO_OUTPUT_SHOWER_UPPER = 21,        /* OUT21-PE3 */
+  AUTO_OUTPUT_SELF_CLEAN_TOP_VALVE = 22,/* OUT22-PE4 */
+  AUTO_OUTPUT_SELF_CLEAN_LOWER_VALVE = 23, /* OUT23-PE5 */
+  AUTO_OUTPUT_SELF_CLEAN_TOILET_VALVE = 24,/* OUT24-PE6 */
+  AUTO_OUTPUT_BATH_LIQUID_VALVE = 25,   /* OUT25-PC13: selection 0 */
+  AUTO_OUTPUT_FRAGRANCE_VALVE = 26,     /* OUT26-PC14: selection 1 */
+  AUTO_OUTPUT_SOFTENER_VALVE = 27,      /* OUT27-PC15: selection 2 */
+  AUTO_OUTPUT_DEODORIZER_VALVE = 28,    /* OUT28-PF0: selection 3 */
+  AUTO_OUTPUT_CONDITIONER_VALVE = 29,   /* OUT29-PF1: cleaning liquid */
+  AUTO_OUTPUT_DISINFECTANT_VALVE = 30,  /* OUT30-PF2 */
+  AUTO_OUTPUT_BOOSTER_PUMP_RUN = 31,    /* OUT31-PF3 */
+  AUTO_OUTPUT_SPARE_1 = 32,             /* OUT32-PF10 */
+  AUTO_OUTPUT_SPARE_2 = 33,             /* OUT33-PC0 */
+  AUTO_OUTPUT_SPARE_3 = 34,             /* OUT34-PC1 */
+  AUTO_OUTPUT_SPARE_4 = 35,             /* OUT35-PC2 */
+  AUTO_OUTPUT_SPARE_5 = 36,             /* OUT36-PC3 */
+  AUTO_OUTPUT_SPARE_6 = 37,             /* OUT37-PA0 */
+  AUTO_OUTPUT_SPARE_7 = 38,             /* OUT38-PA1 */
+  AUTO_OUTPUT_SPARE_8 = 39,             /* OUT39-PA2 */
+  AUTO_OUTPUT_UPPER_LOCK = 40,          /* MAGLOCK1 EN-PF4 */
+  AUTO_OUTPUT_LOWER_LOCK = 41,          /* MAGLOCK2 EN-PF5 */
+  AUTO_OUTPUT_LEFT_LOCK = 42,           /* MAGLOCK3 EN-PF6 */
+  AUTO_OUTPUT_RIGHT_LOCK = 43,          /* MAGLOCK4 EN-PF7 */
+  AUTO_OUTPUT_REAR_LOCK_1 = 44,         /* MAGLOCK5 EN-PF8 */
+  AUTO_OUTPUT_REAR_LOCK_2 = 45,         /* MAGLOCK6 EN-PF9 */
+  AUTO_OUTPUT_COUNT = 46
 } AutoOutputPoint;
+
+#define AUTO_OUTPUT_FIRST AUTO_OUTPUT_OXYGEN_MACHINE
+#define AUTO_OUTPUT_GPIO_COUNT 39U
 
 typedef enum
 {
@@ -166,6 +172,7 @@ typedef enum
   AUTO_FAULT_UPPER_DOOR_LOCK_CHECK_FAILED = 0x0203U,
   AUTO_FAULT_LOWER_DOOR_LOCK_CHECK_FAILED = 0x0204U,
   AUTO_FAULT_DOOR_NOT_CLOSED = 0x0205U,
+  AUTO_FAULT_UPPER_DOOR_OPEN_TIMEOUT = 0x0206U,
   AUTO_FAULT_TANK_TEMP_SENSOR_INVALID = 0x0301U,
   AUTO_FAULT_PIPE_TEMP_SENSOR_INVALID = 0x0302U,
   AUTO_FAULT_PIPE_TEMP_NOT_READY = 0x0303U,
@@ -185,6 +192,7 @@ typedef enum
   AUTO_FAULT_BOOSTER_PUMP_PRESSURE_SET_FAILED = 0x0504U,
   AUTO_FAULT_SHOWER_VALVE_OUTPUT_FAILED = 0x0505U,
   AUTO_FAULT_FLOW_VALVE_OUTPUT_FAILED = 0x0506U,
+  AUTO_FAULT_CLEAN_LIQUID_LOW = 0x0507U,
   AUTO_FAULT_FAN_OUTPUT_FAILED = 0x0601U,
   AUTO_FAULT_HEATER_OUTPUT_FAILED = 0x0602U,
   AUTO_FAULT_DRY_CABIN_TEMP_SENSOR_INVALID = 0x0603U,
@@ -201,6 +209,7 @@ typedef enum
   AUTO_FAULT_485_BOTTOM_HEATER_COMM = 0x0807U,
   AUTO_FAULT_485_BOOSTER_PUMP_COMM = 0x0808U,
   AUTO_FAULT_485_PROPORTIONAL_VALVE_COMM = 0x0809U,
+  AUTO_FAULT_485_FAN_PWM_COMM = 0x080AU, /* QX-DO24 communication/configuration mismatch. */
   AUTO_FAULT_SELF_TEST_NOT_ALLOWED = 0x0901U,
   AUTO_FAULT_SELF_TEST_OVERPRESSURE = 0x0902U,
   AUTO_FAULT_SELF_TEST_OVER_TEMPERATURE = 0x0903U,
@@ -228,6 +237,9 @@ uint8_t AutoDevice_ReadInput(AutoInputPoint point);
 uint8_t AutoDevice_ReadInputRaw(AutoInputPoint point);
 void AutoDevice_ProcessInputs(void);
 HAL_StatusTypeDef AutoDevice_SetOutput(AutoOutputPoint point, uint8_t enabled);
+HAL_StatusTypeDef AutoDevice_SetTopFanRunning(uint8_t enabled);
+HAL_StatusTypeDef AutoDevice_SetBlower(uint8_t enabled);
+uint8_t AutoDevice_IsBoosterPumpRunning(void);
 void AutoDevice_AllDangerousOutputsOff(void);
 void AutoDevice_SetAllShowerValves(uint8_t enabled);
 HAL_StatusTypeDef AutoDevice_SetBoosterPumpPercent(uint8_t percent);
@@ -246,6 +258,7 @@ HAL_StatusTypeDef AutoDevice_SetFlowPercent(uint8_t percent);
 uint8_t AutoDevice_GetFlowTargetPercent(void);
 
 void AutoDevice_SetCommand(AutoCommand command);
+void AutoDevice_ClearHostCommands(void);
 uint8_t AutoDevice_ConsumeCommand(AutoCommand command);
 void AutoDevice_SetRecipeSelectedFlag(void);
 uint8_t AutoDevice_ConsumeRecipeSelectedFlag(void);

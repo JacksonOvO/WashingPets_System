@@ -38,6 +38,7 @@ typedef enum
   OUTPUT_COMMAND_CLEAR_SOURCE,  /* 清除某一来源的全部请求。 */
   OUTPUT_COMMAND_ALL_OFF,       /* 清除自动和手动两套请求。 */
   OUTPUT_COMMAND_SET_TOP_EXHAUST_PERCENT,
+  OUTPUT_COMMAND_SET_TOP_RUNNING,
   OUTPUT_COMMAND_START_AUTO_DOOR_CLOSE,
   OUTPUT_COMMAND_CANCEL_AUTO_DOOR_CLOSE,
   OUTPUT_COMMAND_SYNC           /* 同步屏障：确认前序输出命令已处理。 */
@@ -67,49 +68,54 @@ typedef struct
  * 最终输出点位表，严格对应用户提供的硬件表。
  * 所有点均为低电平有效：逻辑开启写GPIO_PIN_RESET，逻辑关闭写GPIO_PIN_SET。
  * PB4配置为普通GPIO后不能再使用完整JTAG，但SWD下载和调试不受影响。
- * PC0用于OUT39热水器阀，PC1用于主板电源控制。
+ * Ordinary OUT1..39 and dedicated MAGLOCK1..6 use distinct pins.
  */
 static const OutputHw output_hw_table[AUTO_OUTPUT_COUNT] = {
-  [AUTO_OUTPUT_EXHAUST_FAN] = {GPIOB, GPIO_PIN_12, 0U}, /* 排气扇，急停时强制关断。 */
-  [AUTO_OUTPUT_OXYGEN_MACHINE] = {GPIOB, GPIO_PIN_13, 0U}, /* 制氧机，急停时强制关断。 */
-  [AUTO_OUTPUT_AIR_FRESHENER] = {GPIOB, GPIO_PIN_14, 0U}, /* 空气清新剂。 */
-  [AUTO_OUTPUT_MANUAL_CLEAN_VALVE] = {GPIOB, GPIO_PIN_15, 0U}, /* 手动清洁阀。 */
-  [AUTO_OUTPUT_EXHAUST_UV_LAMP] = {GPIOD, GPIO_PIN_8, 0U}, /* 排风紫外线灯。 */
-  [AUTO_OUTPUT_WATER_HEATER] = {GPIOD, GPIO_PIN_9, 0U}, /* 热水器。 */
-  [AUTO_OUTPUT_TAP_WATER_VALVE] = {GPIOD, GPIO_PIN_10, 0U}, /* 自来水阀。 */
-  [AUTO_OUTPUT_SCREW_PUMP] = {GPIOD, GPIO_PIN_11, 0U}, /* 投液螺动泵。 */
-  [AUTO_OUTPUT_SHOWER_UPPER] = {GPIOD, GPIO_PIN_12, 0U}, /* 淋浴阀上。 */
-  [AUTO_OUTPUT_SHOWER_MIDDLE] = {GPIOD, GPIO_PIN_13, 0U}, /* 淋浴阀中。 */
-  [AUTO_OUTPUT_SHOWER_LOWER] = {GPIOB, GPIO_PIN_4, 0U}, /* 淋浴阀下。 */
-  [AUTO_OUTPUT_SHOWER_REAR] = {GPIOB, GPIO_PIN_5, 0U}, /* 淋浴阀后。 */
-  [AUTO_OUTPUT_BATH_LIQUID_VALVE] = {GPIOB, GPIO_PIN_6, 0U}, /* 沐浴液阀。 */
-  [AUTO_OUTPUT_FRAGRANCE_VALVE] = {GPIOB, GPIO_PIN_7, 0U}, /* 芬香液阀。 */
-  [AUTO_OUTPUT_SOFTENER_VALVE] = {GPIOB, GPIO_PIN_8, 0U}, /* 柔顺液阀。 */
-  [AUTO_OUTPUT_DEODORIZER_VALVE] = {GPIOB, GPIO_PIN_9, 0U}, /* 除螨液阀。 */
-  [AUTO_OUTPUT_CONDITIONER_VALVE] = {GPIOE, GPIO_PIN_0, 0U}, /* 护毛素阀。 */
-  [AUTO_OUTPUT_DISINFECTANT_VALVE] = {GPIOE, GPIO_PIN_1, 0U}, /* 消毒液阀。 */
-  [AUTO_OUTPUT_UV_LAMP] = {GPIOB, GPIO_PIN_3, 0U}, /* 紫外线灯。 */
-  [AUTO_OUTPUT_SELF_CLEAN_TOP_VALVE] = {GPIOE, GPIO_PIN_2, 0U}, /* 自清洁顶部阀。 */
-  [AUTO_OUTPUT_SELF_CLEAN_FRONT_UPPER_VALVE] = {GPIOE, GPIO_PIN_3, 0U}, /* 自清洁前侧上阀。 */
-  [AUTO_OUTPUT_SELF_CLEAN_FRONT_LOWER_VALVE] = {GPIOE, GPIO_PIN_4, 0U}, /* 自清洁前侧下阀。 */
-  [AUTO_OUTPUT_SELF_CLEAN_REAR_VALVE] = {GPIOE, GPIO_PIN_5, 0U}, /* 自清洁后端阀。 */
-  [AUTO_OUTPUT_BYPASS_VALVE] = {GPIOE, GPIO_PIN_6, 0U}, /* 旁通阀。 */
-  [AUTO_OUTPUT_OZONE] = {GPIOC, GPIO_PIN_13, 0U}, /* 臭氧发生器。 */
-  [AUTO_OUTPUT_LIGHTING] = {GPIOC, GPIO_PIN_14, 1U}, /* 舱内照明，低电平有效，默认开启，急停保持开启。 */
-  [AUTO_OUTPUT_FRONT_DOOR_LIGHT] = {GPIOC, GPIO_PIN_15, 0U}, /* 正门灯带，急停时强制关断。 */
-  [AUTO_OUTPUT_LOGO_LIGHT] = {GPIOF, GPIO_PIN_0, 0U}, /* LOGO发光板，急停时强制关断。 */
-  [AUTO_OUTPUT_BOOSTER_PUMP_RUN] = {GPIOF, GPIO_PIN_1, 0U}, /* 增压泵GPIO启停。 */
-  [AUTO_OUTPUT_DOOR_CLOSE] = {GPIOF, GPIO_PIN_2, 0U}, /* 自动关门输出。 */
-  [AUTO_OUTPUT_DOOR_STOP] = {GPIOF, GPIO_PIN_3, 0U}, /* 关门停止输出。 */
-  [AUTO_OUTPUT_UPPER_LOCK] = {GPIOF, GPIO_PIN_4, 0U}, /* 上门电磁锁。 */
-  [AUTO_OUTPUT_LOWER_LOCK] = {GPIOF, GPIO_PIN_5, 0U}, /* 下门电磁锁。 */
-  [AUTO_OUTPUT_LEFT_LOCK] = {GPIOF, GPIO_PIN_6, 0U}, /* 左电插锁。 */
-  [AUTO_OUTPUT_RIGHT_LOCK] = {GPIOF, GPIO_PIN_7, 0U}, /* 右电插锁。 */
-  [AUTO_OUTPUT_REAR_LOCK_1] = {GPIOF, GPIO_PIN_8, 0U}, /* 后电插锁1。 */
-  [AUTO_OUTPUT_REAR_LOCK_2] = {GPIOF, GPIO_PIN_9, 0U}, /* 后电插锁2。 */
-  [AUTO_OUTPUT_DOOR_OPEN] = {GPIOF, GPIO_PIN_10, 0U}, /* 自动开门输出。 */
-  [AUTO_OUTPUT_STANDBY2_VALVE] = {GPIOC, GPIO_PIN_0, 0U}, /* 热水器阀。 */
-  [AUTO_OUTPUT_MAIN_POWER] = {GPIOC, GPIO_PIN_1, 0U}, /* 主板电源控制。 */
+  [AUTO_OUTPUT_OXYGEN_MACHINE] = {GPIOB, GPIO_PIN_12, 0U},                           /* OUT1 - PB12: 制氧机 */
+  [AUTO_OUTPUT_EXHAUST_UV_LAMP] = {GPIOB, GPIO_PIN_13, 0U},                          /* OUT2 - PB13: 排风紫外线灯 */
+  [AUTO_OUTPUT_UV_LAMP] = {GPIOB, GPIO_PIN_14, 0U},                                  /* OUT3 - PB14: 舱内紫外线灯 */
+  [AUTO_OUTPUT_BLOWER] = {GPIOB, GPIO_PIN_15, 0U},                                   /* OUT4 - PB15: 吹水机 */
+  [AUTO_OUTPUT_SWING_MOTOR] = {GPIOD, GPIO_PIN_8, 0U},                               /* OUT5 - PD8: 摇摆电机 */
+  [AUTO_OUTPUT_FLOOR_LIFT] = {GPIOD, GPIO_PIN_9, 0U},                                /* OUT6 - PD9: 底板升降 */
+  [AUTO_OUTPUT_MAIN_POWER] = {GPIOD, GPIO_PIN_10, 0U},                               /* OUT7 - PD10: 主板电源控制 */
+  [AUTO_OUTPUT_AIR_FRESHENER] = {GPIOD, GPIO_PIN_11, 0U},                            /* OUT8 - PD11: 空气清新喷雾 */
+  [AUTO_OUTPUT_BATH_PUMP] = {GPIOD, GPIO_PIN_12, 0U},                                /* OUT9 - PD12: 沐浴蠕动泵 */
+  [AUTO_OUTPUT_SELF_CLEAN_PUMP] = {GPIOD, GPIO_PIN_13, 0U},                          /* OUT10 - PD13: 自清洁蠕动泵 */
+  [AUTO_OUTPUT_LIGHTING] = {GPIOB, GPIO_PIN_4, 1U},                                  /* OUT11 - PB4: 舱内照明，默认开启、急停保持，允许手动控制 */
+  [AUTO_OUTPUT_FRONT_DOOR_LIGHT] = {GPIOB, GPIO_PIN_5, 0U},                          /* OUT12 - PB5: 正门灯带 */
+  [AUTO_OUTPUT_DOOR_OPEN] = {GPIOB, GPIO_PIN_6, 0U},                                 /* OUT13 - PB6: 闭门器开门 */
+  [AUTO_OUTPUT_DOOR_CLOSE] = {GPIOB, GPIO_PIN_7, 0U},                                /* OUT14 - PB7: 闭门器关门 */
+  [AUTO_OUTPUT_DOOR_STOP] = {GPIOB, GPIO_PIN_8, 0U},                                 /* OUT15 - PB8: 闭门器停止 */
+  [AUTO_OUTPUT_MANUAL_CLEAN_VALVE] = {GPIOB, GPIO_PIN_9, 0U},                        /* OUT16 - PB9: 手动清洁阀 */
+  [AUTO_OUTPUT_TAP_WATER_VALVE] = {GPIOE, GPIO_PIN_0, 0U},                           /* OUT17 - PE0: 自来水阀 */
+  [AUTO_OUTPUT_STANDBY2_VALVE] = {GPIOE, GPIO_PIN_1, 0U},                            /* OUT18 - PE1: 热水器阀 */
+  [AUTO_OUTPUT_BYPASS_VALVE] = {GPIOB, GPIO_PIN_3, 0U},                              /* OUT19 - PB3: 旁通阀 */
+  [AUTO_OUTPUT_SHOWER_MIDDLE] = {GPIOE, GPIO_PIN_2, 0U},                             /* OUT20 - PE2: 淋浴阀中 */
+  [AUTO_OUTPUT_SHOWER_UPPER] = {GPIOE, GPIO_PIN_3, 0U},                              /* OUT21 - PE3: 淋浴阀上 */
+  [AUTO_OUTPUT_SELF_CLEAN_TOP_VALVE] = {GPIOE, GPIO_PIN_4, 0U},                      /* OUT22 - PE4: 自清洁阀上 */
+  [AUTO_OUTPUT_SELF_CLEAN_LOWER_VALVE] = {GPIOE, GPIO_PIN_5, 0U},                    /* OUT23 - PE5: 自清洁阀夹层下 */
+  [AUTO_OUTPUT_SELF_CLEAN_TOILET_VALVE] = {GPIOE, GPIO_PIN_6, 0U},                   /* OUT24 - PE6: 自清洁阀马桶 */
+  [AUTO_OUTPUT_BATH_LIQUID_VALVE] = {GPIOC, GPIO_PIN_13, 0U},                        /* OUT25 - PC13: 沐浴液阀1，选择0 */
+  [AUTO_OUTPUT_FRAGRANCE_VALVE] = {GPIOC, GPIO_PIN_14, 0U},                          /* OUT26 - PC14: 沐浴液阀2，选择1 */
+  [AUTO_OUTPUT_SOFTENER_VALVE] = {GPIOC, GPIO_PIN_15, 0U},                           /* OUT27 - PC15: 沐浴液阀3，选择2 */
+  [AUTO_OUTPUT_DEODORIZER_VALVE] = {GPIOF, GPIO_PIN_0, 0U},                          /* OUT28 - PF0: 沐浴液阀4，选择3 */
+  [AUTO_OUTPUT_CONDITIONER_VALVE] = {GPIOF, GPIO_PIN_1, 0U},                         /* OUT29 - PF1: 清洁液阀 */
+  [AUTO_OUTPUT_DISINFECTANT_VALVE] = {GPIOF, GPIO_PIN_2, 0U},                        /* OUT30 - PF2: 消毒液阀 */
+  [AUTO_OUTPUT_BOOSTER_PUMP_RUN] = {GPIOF, GPIO_PIN_3, 0U},                          /* OUT31 - PF3: 增压泵GPIO启停，仅GPIO控制模式使用 */
+  [AUTO_OUTPUT_SPARE_1] = {GPIOF, GPIO_PIN_10, 0U},                                  /* OUT32 - PF10: 备用1 */
+  [AUTO_OUTPUT_SPARE_2] = {GPIOC, GPIO_PIN_0, 0U},                                   /* OUT33 - PC0: 备用2 */
+  [AUTO_OUTPUT_SPARE_3] = {GPIOC, GPIO_PIN_1, 0U},                                   /* OUT34 - PC1: 备用3 */
+  [AUTO_OUTPUT_SPARE_4] = {GPIOC, GPIO_PIN_2, 0U},                                   /* OUT35 - PC2: 备用4 */
+  [AUTO_OUTPUT_SPARE_5] = {GPIOC, GPIO_PIN_3, 0U},                                   /* OUT36 - PC3: 备用5 */
+  [AUTO_OUTPUT_SPARE_6] = {GPIOA, GPIO_PIN_0, 0U},                                   /* OUT37 - PA0: 备用6 */
+  [AUTO_OUTPUT_SPARE_7] = {GPIOA, GPIO_PIN_1, 0U},                                   /* OUT38 - PA1: 备用7 */
+  [AUTO_OUTPUT_SPARE_8] = {GPIOA, GPIO_PIN_2, 0U},                                   /* OUT39 - PA2: 备用8 */
+  [AUTO_OUTPUT_UPPER_LOCK] = {GPIOF, GPIO_PIN_4, 0U},                                /* MAGLOCK1 EN (ID40) - PF4: 上门电磁锁 */
+  [AUTO_OUTPUT_LOWER_LOCK] = {GPIOF, GPIO_PIN_5, 0U},                                /* MAGLOCK2 EN (ID41) - PF5: 下门电磁锁 */
+  [AUTO_OUTPUT_LEFT_LOCK] = {GPIOF, GPIO_PIN_6, 0U},                                 /* MAGLOCK3 EN (ID42) - PF6: 左电插锁 */
+  [AUTO_OUTPUT_RIGHT_LOCK] = {GPIOF, GPIO_PIN_7, 0U},                                /* MAGLOCK4 EN (ID43) - PF7: 右电插锁 */
+  [AUTO_OUTPUT_REAR_LOCK_1] = {GPIOF, GPIO_PIN_8, 0U},                               /* MAGLOCK5 EN (ID44) - PF8: 后电插锁1 */
+  [AUTO_OUTPUT_REAR_LOCK_2] = {GPIOF, GPIO_PIN_9, 0U},                               /* MAGLOCK6 EN (ID45) - PF9: 后电插锁2 */
 };
 
 /* RTOS对象句柄，仅由本模块创建和使用。 */
@@ -122,9 +128,9 @@ static volatile uint8_t dangerous_off_requested;
 static volatile uint8_t tank_high_level_protect_latched;
 static uint8_t tank_high_level_tracking;
 static uint32_t tank_high_level_reached_tick;
-/* 自动流程对38个点提出的最新逻辑请求。 */
+/* 自动流程对45个点提出的最新逻辑请求。 */
 static uint8_t auto_request[AUTO_OUTPUT_COUNT];
-/* 上位机或本地手动操作对38个点提出的最新逻辑请求。 */
+/* 上位机或本地手动操作对45个点提出的最新逻辑请求。 */
 static uint8_t manual_request[AUTO_OUTPUT_COUNT];
 /* 经过模式选择与全部互锁后，真正写到硬件的逻辑状态。 */
 static volatile uint8_t actual_output[AUTO_OUTPUT_COUNT];
@@ -144,9 +150,20 @@ static const osThreadAttr_t output_task_attributes = {
 };
 
 /* 打开输出点涉及的GPIOB~GPIOG外设时钟。 */
+static HAL_StatusTypeDef output_queue_command(const OutputCommand *command);
+
+HAL_StatusTypeDef TaskOutput_SetTopFanRunning(uint8_t enabled)
+{
+  OutputCommand command = {0};
+  command.type = OUTPUT_COMMAND_SET_TOP_RUNNING;
+  command.enabled = enabled != 0U;
+  return output_queue_command(&command);
+}
+
 #if (APP_DRY_RUN_ENABLE == 0U)
 static void enable_gpio_clocks(void)
 {
+  __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
   __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOD_CLK_ENABLE();
@@ -154,6 +171,7 @@ static void enable_gpio_clocks(void)
   __HAL_RCC_GPIOF_CLK_ENABLE();
   __HAL_RCC_GPIOG_CLK_ENABLE();
 }
+
 
 static GPIO_PinState output_pin_state(AutoOutputPoint point, uint8_t enabled)
 {
@@ -182,7 +200,7 @@ void TaskOutput_InitHardware(void)
   }
 
   enable_gpio_clocks();
-  for (point = AUTO_OUTPUT_EXHAUST_FAN; point < AUTO_OUTPUT_COUNT; ++point)
+  for (point = AUTO_OUTPUT_FIRST; point < AUTO_OUTPUT_COUNT; ++point)
   {
     const OutputHw *hw = &output_hw_table[point];
     uint8_t initial_target = (point == AUTO_OUTPUT_LIGHTING) ? 1U : 0U;
@@ -204,7 +222,7 @@ void TaskOutput_InitHardware(void)
 /* 检查枚举值是否落在有效输出点范围内。 */
 static uint8_t point_is_valid(AutoOutputPoint point)
 {
-  return ((point >= AUTO_OUTPUT_EXHAUST_FAN) &&
+  return ((point >= AUTO_OUTPUT_FIRST) &&
           (point < AUTO_OUTPUT_COUNT)) ? 1U : 0U;
 }
 
@@ -212,11 +230,8 @@ static uint8_t output_is_dangerous(AutoOutputPoint point)
 {
   switch (point)
   {
-    case AUTO_OUTPUT_EXHAUST_FAN:
-    case AUTO_OUTPUT_WATER_HEATER:
     case AUTO_OUTPUT_LIGHTING:
     case AUTO_OUTPUT_FRONT_DOOR_LIGHT:
-    case AUTO_OUTPUT_LOGO_LIGHT:
     case AUTO_OUTPUT_UPPER_LOCK:
     case AUTO_OUTPUT_LOWER_LOCK:
     case AUTO_OUTPUT_LEFT_LOCK:
@@ -235,7 +250,7 @@ uint8_t TaskOutput_HasDangerousOutputActive(void)
 {
   AutoOutputPoint point;
 
-  for (point = AUTO_OUTPUT_EXHAUST_FAN; point < AUTO_OUTPUT_COUNT; ++point)
+  for (point = AUTO_OUTPUT_FIRST; point < AUTO_OUTPUT_COUNT; ++point)
   {
     if ((output_is_dangerous(point) != 0U) &&
         (actual_output[point] != 0U))
@@ -253,8 +268,6 @@ static uint8_t output_requires_closed_doors(AutoOutputPoint point)
   {
     case AUTO_OUTPUT_SHOWER_UPPER:
     case AUTO_OUTPUT_SHOWER_MIDDLE:
-    case AUTO_OUTPUT_SHOWER_LOWER:
-    case AUTO_OUTPUT_SHOWER_REAR:
     case AUTO_OUTPUT_BATH_LIQUID_VALVE:
     case AUTO_OUTPUT_FRAGRANCE_VALVE:
     case AUTO_OUTPUT_SOFTENER_VALVE:
@@ -263,13 +276,15 @@ static uint8_t output_requires_closed_doors(AutoOutputPoint point)
     case AUTO_OUTPUT_DISINFECTANT_VALVE:
     case AUTO_OUTPUT_UV_LAMP:
     case AUTO_OUTPUT_EXHAUST_UV_LAMP:
-    case AUTO_OUTPUT_SCREW_PUMP:
+    case AUTO_OUTPUT_BATH_PUMP:
+    case AUTO_OUTPUT_SELF_CLEAN_PUMP:
+    case AUTO_OUTPUT_BLOWER:
+    case AUTO_OUTPUT_SWING_MOTOR:
+    case AUTO_OUTPUT_FLOOR_LIFT:
     case AUTO_OUTPUT_BOOSTER_PUMP_RUN:
     case AUTO_OUTPUT_SELF_CLEAN_TOP_VALVE:
-    case AUTO_OUTPUT_SELF_CLEAN_FRONT_UPPER_VALVE:
-    case AUTO_OUTPUT_SELF_CLEAN_FRONT_LOWER_VALVE:
-    case AUTO_OUTPUT_SELF_CLEAN_REAR_VALVE:
-    case AUTO_OUTPUT_OZONE:
+    case AUTO_OUTPUT_SELF_CLEAN_LOWER_VALVE:
+    case AUTO_OUTPUT_SELF_CLEAN_TOILET_VALVE:
       return 1U;
 
     default:
@@ -346,12 +361,10 @@ static uint8_t output_interlock_allow(AutoOutputPoint point, uint8_t enabled)
     return 0U;
   }
 
-  /* 关门过程中光幕被遮挡或门已到位，立即撤销关门机构输出。 */
+  /* 上下门均到位后撤销关门输出；原光幕引脚已改为备用输入。 */
   if ((point == AUTO_OUTPUT_DOOR_CLOSE) &&
-      ((AutoDevice_ReadInput(AUTO_INPUT_UPPER_LIGHT_CURTAIN) != 0U) ||
-       (AutoDevice_ReadInput(AUTO_INPUT_LOWER_LIGHT_CURTAIN) != 0U) ||
-       ((AutoDevice_ReadInput(AUTO_INPUT_UPPER_DOOR_CLOSED) != 0U) &&
-        (AutoDevice_ReadInput(AUTO_INPUT_LOWER_DOOR_CLOSED) != 0U))))
+      ((AutoDevice_ReadInput(AUTO_INPUT_UPPER_DOOR_CLOSED) != 0U) &&
+       (AutoDevice_ReadInput(AUTO_INPUT_LOWER_DOOR_CLOSED) != 0U)))
   {
     return 0U;
   }
@@ -368,16 +381,6 @@ static uint8_t output_decide_target(AutoOutputPoint point)
     return (output_hw_table[point].keep_on_during_emergency != 0U) ? 1U : 0U;
   }
 
-  /*
-   * OUT6 是热水器继电器，热水器本体需要保持上电待机。
-   * 是否真正加热由水流和热水器电磁阀共同决定。
-   * 急停时由上方分支直接返回 0（不做保持）。
-   */
-  if (point == AUTO_OUTPUT_WATER_HEATER)
-  {
-    return 1U;
-  }
-
   return (output_auto_mode != 0U) ? auto_request[point] : manual_request[point];
 }
 
@@ -388,11 +391,9 @@ static uint8_t output_decide_target(AutoOutputPoint point)
 static void output_apply(AutoOutputPoint point)
 {
   uint8_t target;
-  uint8_t previous;
   const OutputHw *hw;
 
   target = output_decide_target(point);
-  previous = actual_output[point];
   hw = &output_hw_table[point];
 
   if (output_interlock_allow(point, target) == 0U)
@@ -400,18 +401,10 @@ static void output_apply(AutoOutputPoint point)
     target = 0U;
   }
 
+  if ((point == AUTO_OUTPUT_BOOSTER_PUMP_RUN) && AppParam_BoosterPumpUsesRs485()) target = 0U;
+  if ((output_auto_mode != 0U) && (point == AUTO_OUTPUT_SWING_MOTOR) &&
+      (actual_output[AUTO_OUTPUT_BLOWER] == 0U)) target = 0U;
   actual_output[point] = target;
-  if ((TaskComm485_IsRs485ActuatorMode() != 0U) &&
-      (point == AUTO_OUTPUT_EXHAUST_FAN))
-  {
-    if (target != previous)
-    {
-      (void)TaskComm485_RequestSetPercent(RS485_STATION_TOP_EXHAUST_FAN,
-                                          (target != 0U) ?
-                                          top_exhaust_on_percent : 0U);
-    }
-    return;
-  }
 #if (APP_DRY_RUN_ENABLE != 0U)
   (void)hw;
   return;
@@ -566,6 +559,17 @@ static void output_apply_all(void)
     requested_auto_mode = 0U;
   }
 
+  if (!AppParam_BoosterPumpUsesRs485() && AutoDevice_ReadInput(AUTO_INPUT_TANK_LOW) &&
+      (actual_output[AUTO_OUTPUT_BOOSTER_PUMP_RUN] ||
+       (output_auto_mode ? auto_request[AUTO_OUTPUT_BOOSTER_PUMP_RUN] :
+                           manual_request[AUTO_OUTPUT_BOOSTER_PUMP_RUN])))
+  {
+    dangerous_off_requested = 1U;
+    AutoDevice_SetFault(AUTO_FAULT_TANK_LOW_PROTECT);
+    AutoDevice_Report(AUTO_REPORT_SENSOR_FAULT);
+    AutoDevice_SetStopRequested(1U);
+    TaskComm485_RequestSafeStop();
+  }
   if (dangerous_off_requested != 0U)
   {
     top_exhaust_on_percent = OUTPUT_TOP_EXHAUST_DEFAULT_PERCENT;
@@ -580,7 +584,7 @@ static void output_apply_all(void)
     {
       auto_door_close_cancel_internal();
     }
-    for (point = AUTO_OUTPUT_EXHAUST_FAN; point < AUTO_OUTPUT_COUNT; ++point)
+    for (point = AUTO_OUTPUT_FIRST; point < AUTO_OUTPUT_COUNT; ++point)
     {
       if (output_is_dangerous(point) != 0U)
       {
@@ -589,6 +593,27 @@ static void output_apply_all(void)
       }
     }
     dangerous_off_requested = 0U;
+  }
+
+  if (actual_output[AUTO_OUTPUT_BLOWER] ||
+      (output_auto_mode ? auto_request[AUTO_OUTPUT_BLOWER] : manual_request[AUTO_OUTPUT_BLOWER]))
+  {
+    TaskComm485EnvironmentData environment;
+    AutoFaultCode fault = AUTO_FAULT_NONE;
+    if (!TaskComm485_GetEnvironmentData(&environment) || !environment.incab_valid)
+      fault = AUTO_FAULT_DRY_CABIN_TEMP_SENSOR_INVALID;
+    else if (environment.incab_temperature_x10 >= 450)
+      fault = AUTO_FAULT_DRY_TEMP_CONTROL_FAILED;
+    if (fault != AUTO_FAULT_NONE)
+    {
+      dangerous_off_requested = 1U;
+      auto_request[AUTO_OUTPUT_BLOWER] = manual_request[AUTO_OUTPUT_BLOWER] = 0U;
+      auto_request[AUTO_OUTPUT_SWING_MOTOR] = manual_request[AUTO_OUTPUT_SWING_MOTOR] = 0U;
+      TaskComm485_RequestSafeStop();
+      AutoDevice_SetFault(fault);
+      AutoDevice_Report(AUTO_REPORT_SENSOR_FAULT);
+      AutoDevice_SetStopRequested(1U);
+    }
   }
 
   auto_door_close_process();
@@ -612,7 +637,7 @@ static void output_apply_all(void)
   }
 
   /*
-   * OUT30 是一次性关门请求。门到位后必须同时清除请求，
+   * OUT14 是一次性关门请求。门到位后必须同时清除请求，
    * 否则门磁再次断开时，旧请求会重新驱动闭门器。
    */
   if ((AutoDevice_ReadInput(AUTO_INPUT_UPPER_DOOR_CLOSED) != 0U) &&
@@ -622,7 +647,7 @@ static void output_apply_all(void)
     manual_request[AUTO_OUTPUT_DOOR_CLOSE] = 0U;
   }
 
-  for (point = AUTO_OUTPUT_EXHAUST_FAN; point < AUTO_OUTPUT_COUNT; ++point)
+  for (point = AUTO_OUTPUT_FIRST; point < AUTO_OUTPUT_COUNT; ++point)
   {
     /* 急停出现后清除危险请求，急停释放时不会自动恢复动作。 */
     if ((AutoDevice_IsEmergencyStopped() != 0U) &&
@@ -650,7 +675,7 @@ static void output_clear_source(AppOutputSource source)
   uint8_t *request = (source == APP_OUTPUT_SOURCE_MANUAL) ?
                      manual_request : auto_request;
 
-  for (point = AUTO_OUTPUT_EXHAUST_FAN; point < AUTO_OUTPUT_COUNT; ++point)
+  for (point = AUTO_OUTPUT_FIRST; point < AUTO_OUTPUT_COUNT; ++point)
   {
     request[point] = 0U;
   }
@@ -678,6 +703,10 @@ static void output_process_command(const OutputCommand *command)
   {
     return;
   }
+  if (TaskComm485_HardwareConfigBusy() && command->enabled &&
+      (command->type == OUTPUT_COMMAND_SET || command->type == OUTPUT_COMMAND_SET_MODE ||
+       command->type == OUTPUT_COMMAND_SET_TOP_EXHAUST_PERCENT ||
+       command->type == OUTPUT_COMMAND_SET_TOP_RUNNING)) return;
 
   switch (command->type)
   {
@@ -698,8 +727,8 @@ static void output_process_command(const OutputCommand *command)
     case OUTPUT_COMMAND_SET_MODE:
     {
       uint8_t next_auto_mode = (command->enabled != 0U) ? 1U : 0U;
-      uint8_t preserve_upper_lock = 0U;
-      uint8_t preserve_lower_lock = 0U;
+      uint8_t preserved_locks[6] = {0};
+      AutoOutputPoint lock;
 
       if ((next_auto_mode != 0U) &&
           (AutoDevice_IsEmergencyStopped() != 0U))
@@ -710,12 +739,9 @@ static void output_process_command(const OutputCommand *command)
       {
         if (next_auto_mode != 0U)
         {
-          /*
-           * 手动切自动时仅无缝交接上下门锁。其他手动输出仍按新模式
-           * 全部清空，避免把泵、阀或加热等调试状态带入自动流程。
-           */
-          preserve_upper_lock = actual_output[AUTO_OUTPUT_UPPER_LOCK];
-          preserve_lower_lock = actual_output[AUTO_OUTPUT_LOWER_LOCK];
+          /* Preserve all six locks without carrying manual process outputs over. */
+          for (lock = AUTO_OUTPUT_UPPER_LOCK; lock <= AUTO_OUTPUT_REAR_LOCK_2; ++lock)
+            preserved_locks[lock - AUTO_OUTPUT_UPPER_LOCK] = actual_output[lock];
         }
         output_auto_mode = next_auto_mode;
         /* 新模式从全关闭开始，防止恢复很早以前遗留的请求。 */
@@ -723,8 +749,8 @@ static void output_process_command(const OutputCommand *command)
                             APP_OUTPUT_SOURCE_AUTO : APP_OUTPUT_SOURCE_MANUAL);
         if (output_auto_mode != 0U)
         {
-          auto_request[AUTO_OUTPUT_UPPER_LOCK] = preserve_upper_lock;
-          auto_request[AUTO_OUTPUT_LOWER_LOCK] = preserve_lower_lock;
+          for (lock = AUTO_OUTPUT_UPPER_LOCK; lock <= AUTO_OUTPUT_REAR_LOCK_2; ++lock)
+            auto_request[lock] = preserved_locks[lock - AUTO_OUTPUT_UPPER_LOCK];
         }
         if (output_auto_mode == 0U)
         {
@@ -739,8 +765,17 @@ static void output_process_command(const OutputCommand *command)
     }
 
     case OUTPUT_COMMAND_CLEAR_SOURCE:
+    {
+      uint8_t locks[6];
+      AutoOutputPoint lock;
+      for (lock = AUTO_OUTPUT_UPPER_LOCK; lock <= AUTO_OUTPUT_REAR_LOCK_2; ++lock)
+        locks[lock - AUTO_OUTPUT_UPPER_LOCK] = actual_output[lock];
       output_clear_source(command->source);
+      if (command->source == APP_OUTPUT_SOURCE_AUTO && output_auto_mode)
+        for (lock = AUTO_OUTPUT_UPPER_LOCK; lock <= AUTO_OUTPUT_REAR_LOCK_2; ++lock)
+          auto_request[lock] = locks[lock - AUTO_OUTPUT_UPPER_LOCK];
       break;
+    }
 
     case OUTPUT_COMMAND_ALL_OFF:
       output_clear_source(APP_OUTPUT_SOURCE_AUTO);
@@ -753,12 +788,11 @@ static void output_process_command(const OutputCommand *command)
     case OUTPUT_COMMAND_SET_TOP_EXHAUST_PERCENT:
       top_exhaust_on_percent = (command->enabled <= 100U) ?
                                command->enabled : 100U;
-      if ((actual_output[AUTO_OUTPUT_EXHAUST_FAN] != 0U) &&
-          (TaskComm485_IsRs485ActuatorMode() != 0U))
-      {
-        (void)TaskComm485_RequestSetPercent(RS485_STATION_TOP_EXHAUST_FAN,
-                                            top_exhaust_on_percent);
-      }
+      break;
+
+    case OUTPUT_COMMAND_SET_TOP_RUNNING:
+      (void)TaskComm485_RequestSetPercent(RS485_STATION_TOP_EXHAUST_FAN,
+                                         command->enabled ? top_exhaust_on_percent : 0U);
       break;
 
     case OUTPUT_COMMAND_START_AUTO_DOOR_CLOSE:
@@ -798,6 +832,7 @@ static HAL_StatusTypeDef output_queue_command(const OutputCommand *command)
 void TaskOutput_SetAutoMode(uint8_t auto_mode)
 {
   OutputCommand command = {0};
+  if (auto_mode && TaskComm485_HardwareConfigBusy()) return;
 
   /* 急停期间不接受切入自动模式。 */
   if ((auto_mode != 0U) && (AutoDevice_IsEmergencyStopped() != 0U))
@@ -829,6 +864,7 @@ HAL_StatusTypeDef TaskOutput_Request(AppOutputSource source,
                                      uint8_t enabled)
 {
   OutputCommand command = {0};
+  if (enabled && TaskComm485_HardwareConfigBusy()) return HAL_BUSY;
 
   if ((point_is_valid(point) == 0U) ||
       ((source != APP_OUTPUT_SOURCE_AUTO) &&

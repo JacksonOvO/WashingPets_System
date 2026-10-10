@@ -120,16 +120,6 @@ static uint8_t action_time_reached(uint32_t delay_ms)
 
 static HAL_StatusTypeDef set_all_fans(uint8_t percent)
 {
-  if (TaskComm485_RequestSetPercent(RS485_STATION_LEFT_FAN, percent) != HAL_OK)
-  {
-    AutoDevice_SetFault(AUTO_FAULT_485_LEFT_FAN_COMM);
-    return HAL_ERROR;
-  }
-  if (TaskComm485_RequestSetPercent(RS485_STATION_RIGHT_FAN, percent) != HAL_OK)
-  {
-    AutoDevice_SetFault(AUTO_FAULT_485_RIGHT_FAN_COMM);
-    return HAL_ERROR;
-  }
   if (TaskComm485_RequestSetPercent(RS485_STATION_BOTTOM_FAN, percent) != HAL_OK)
   {
     AutoDevice_SetFault(AUTO_FAULT_485_BOTTOM_FAN_COMM);
@@ -140,16 +130,7 @@ static HAL_StatusTypeDef set_all_fans(uint8_t percent)
 
 static HAL_StatusTypeDef set_all_heaters(uint8_t percent)
 {
-  if (TaskComm485_RequestSetPercent(RS485_STATION_LEFT_HEATER, percent) != HAL_OK)
-  {
-    AutoDevice_SetFault(AUTO_FAULT_485_LEFT_HEATER_COMM);
-    return HAL_ERROR;
-  }
-  if (TaskComm485_RequestSetPercent(RS485_STATION_RIGHT_HEATER, percent) != HAL_OK)
-  {
-    AutoDevice_SetFault(AUTO_FAULT_485_RIGHT_HEATER_COMM);
-    return HAL_ERROR;
-  }
+  if (AutoDevice_SetBlower(percent != 0U) != HAL_OK) return HAL_ERROR;
   if (TaskComm485_RequestSetPercent(RS485_STATION_BOTTOM_HEATER, percent) != HAL_OK)
   {
     AutoDevice_SetFault(AUTO_FAULT_485_BOTTOM_HEATER_COMM);
@@ -229,7 +210,7 @@ static AppFlowStepResult CoolAndDehumidify(AppFlowContext *ctx, const AppFlowSte
     }
     heaters_enabled = 0U;
     if ((set_all_fans(EXIT_PREP_FAN_VENT_PERCENT) != HAL_OK) ||
-        (AutoDevice_SetOutput(AUTO_OUTPUT_EXHAUST_FAN, 1U) != HAL_OK))
+        (AutoDevice_SetTopFanRunning(1U) != HAL_OK))
     {
       return APP_FLOW_STEP_FAIL;
     }
@@ -243,7 +224,7 @@ static AppFlowStepResult HeatAndDehumidify(AppFlowContext *ctx, const AppFlowSte
   if (action_begin(step) != 0U)
   {
     if ((set_all_fans(EXIT_PREP_FAN_HEAT_PERCENT) != HAL_OK) ||
-        (AutoDevice_SetOutput(AUTO_OUTPUT_EXHAUST_FAN, 1U) != HAL_OK))
+        (AutoDevice_SetTopFanRunning(1U) != HAL_OK))
     {
       return APP_FLOW_STEP_FAIL;
     }
@@ -275,7 +256,7 @@ static AppFlowStepResult HeatTemperature(AppFlowContext *ctx, const AppFlowStep 
   if (action_begin(step) != 0U)
   {
     if ((set_all_fans(EXIT_PREP_FAN_HEAT_PERCENT) != HAL_OK) ||
-        (AutoDevice_SetOutput(AUTO_OUTPUT_EXHAUST_FAN, 0U) != HAL_OK))
+        (AutoDevice_SetTopFanRunning(0U) != HAL_OK))
     {
       return APP_FLOW_STEP_FAIL;
     }
@@ -307,7 +288,7 @@ static AppFlowStepResult StopTempHumidity(AppFlowContext *ctx, const AppFlowStep
       return APP_FLOW_STEP_FAIL;
     }
     heaters_enabled = 0U;
-    if (AutoDevice_SetOutput(AUTO_OUTPUT_EXHAUST_FAN, 0U) != HAL_OK)
+    if (AutoDevice_SetTopFanRunning(0U) != HAL_OK)
     {
       return APP_FLOW_STEP_FAIL;
     }
@@ -349,7 +330,7 @@ static AppFlowStepResult OxygenLow(AppFlowContext *ctx, const AppFlowStep *step)
   if (action_begin(step) != 0U)
   {
     if ((AutoDevice_SetOutput(AUTO_OUTPUT_OXYGEN_MACHINE, 1U) != HAL_OK) ||
-        (AutoDevice_SetOutput(AUTO_OUTPUT_EXHAUST_FAN, 0U) != HAL_OK) ||
+        (AutoDevice_SetTopFanRunning(0U) != HAL_OK) ||
         (set_all_fans(EXIT_PREP_FAN_OXYGEN_PERCENT) != HAL_OK))
     {
       return APP_FLOW_STEP_FAIL;
@@ -370,7 +351,7 @@ static AppFlowStepResult OxygenHigh(AppFlowContext *ctx, const AppFlowStep *step
     }
     heaters_enabled = 0U;
     if ((set_all_fans(EXIT_PREP_FAN_VENT_PERCENT) != HAL_OK) ||
-        (AutoDevice_SetOutput(AUTO_OUTPUT_EXHAUST_FAN, 1U) != HAL_OK))
+        (AutoDevice_SetTopFanRunning(1U) != HAL_OK))
     {
       return APP_FLOW_STEP_FAIL;
     }

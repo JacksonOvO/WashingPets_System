@@ -3,6 +3,16 @@
 #include <stdint.h>
 #include <stddef.h>
 typedef enum { HAL_OK, HAL_ERROR, HAL_BUSY, HAL_TIMEOUT } HAL_StatusTypeDef;
+typedef struct { unsigned unused; } UART_HandleTypeDef;
+#define __weak __attribute__((weak))
+#define RESET 0U
+#define UART_FLAG_TC 1U
+#define __HAL_UART_CLEAR_OREFLAG(u) ((void)(u))
+#define __HAL_UART_FLUSH_DRREGISTER(u) ((void)(u))
+#define __HAL_UART_GET_FLAG(u, f) (1U)
+void HAL_Delay(uint32_t);
+HAL_StatusTypeDef HAL_UART_Transmit(UART_HandleTypeDef *, uint8_t *, uint16_t, uint32_t);
+HAL_StatusTypeDef HAL_UART_Receive(UART_HandleTypeDef *, uint8_t *, uint16_t, uint32_t);
 typedef struct { uint32_t TypeErase, VoltageRange, Sector, NbSectors; } FLASH_EraseInitTypeDef;
 #define FLASH_TYPEERASE_SECTORS 0U
 #define FLASH_VOLTAGE_RANGE_3 0U
@@ -19,11 +29,13 @@ HAL_StatusTypeDef HAL_FLASH_Program(uint32_t, uint32_t, uint64_t);
 typedef struct { unsigned unused; } GPIO_TypeDef;
 typedef enum { GPIO_PIN_RESET, GPIO_PIN_SET } GPIO_PinState;
 typedef struct { uint32_t Pin, Mode, Pull, Speed; } GPIO_InitTypeDef;
+#define GPIOA ((GPIO_TypeDef *)6)
 #define GPIOB ((GPIO_TypeDef *)1)
 #define GPIOC ((GPIO_TypeDef *)2)
 #define GPIOD ((GPIO_TypeDef *)3)
 #define GPIOE ((GPIO_TypeDef *)4)
 #define GPIOF ((GPIO_TypeDef *)5)
+#define GPIOG ((GPIO_TypeDef *)7)
 #define GPIO_PIN_0 (1U << 0)
 #define GPIO_PIN_1 (1U << 1)
 #define GPIO_PIN_2 (1U << 2)
@@ -41,14 +53,18 @@ typedef struct { uint32_t Pin, Mode, Pull, Speed; } GPIO_InitTypeDef;
 #define GPIO_PIN_14 (1U << 14)
 #define GPIO_PIN_15 (1U << 15)
 #define GPIO_MODE_OUTPUT_PP 0U
+#define GPIO_MODE_INPUT 1U
+#define GPIO_PULLUP 1U
 #define GPIO_NOPULL 0U
 #define GPIO_SPEED_FREQ_LOW 0U
+#define __HAL_RCC_GPIOA_CLK_ENABLE() ((void)0)
 #define __HAL_RCC_GPIOB_CLK_ENABLE() ((void)0)
 #define __HAL_RCC_GPIOC_CLK_ENABLE() ((void)0)
 #define __HAL_RCC_GPIOD_CLK_ENABLE() ((void)0)
 #define __HAL_RCC_GPIOE_CLK_ENABLE() ((void)0)
 #define __HAL_RCC_GPIOF_CLK_ENABLE() ((void)0)
 #define __HAL_RCC_GPIOG_CLK_ENABLE() ((void)0)
+GPIO_PinState HAL_GPIO_ReadPin(GPIO_TypeDef *, uint16_t);
 void HAL_GPIO_Init(GPIO_TypeDef *, GPIO_InitTypeDef *);
 void HAL_GPIO_WritePin(GPIO_TypeDef *, uint16_t, GPIO_PinState);
 #endif

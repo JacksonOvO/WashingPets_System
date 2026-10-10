@@ -7,6 +7,7 @@ gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk, Pango
 
 import server as core
+from hardware_panel import HardwareConfigPanel
 from ..widgets import ResponsiveGrid, card, combo
 from ..i18n import tr, recipe_name
 
@@ -33,6 +34,9 @@ class ParamsPage(Gtk.Box):
         c.set_margin_top(20)
         c.set_margin_bottom(20)
         scroll.add(c)
+
+        self.hardware_panel = HardwareConfigPanel(core.STATE)
+        c.pack_start(self.hardware_panel, False, False, 0)
 
         # Toolbar
         self._config_card = card(tr("param.recipe_config"))
@@ -100,6 +104,7 @@ class ParamsPage(Gtk.Box):
         entry.get_style_context().add_class("param-dirty")
 
     def update_state(self, state):
+        self.hardware_panel.update_state(state)
         params = state.get("parameters", {})
         rev = state.get("paramRevision", 0)
         self.rev_label.set_text(f"{tr('param.version')} {rev}")

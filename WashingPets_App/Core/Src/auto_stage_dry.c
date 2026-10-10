@@ -22,6 +22,7 @@ static int16_t last_temp_x10;
 static uint32_t last_temp_tick;
 static uint8_t heater_percent;
 static uint8_t fan_percent;
+static uint8_t blower_enabled;
 
 static void DryReset(void)
 {
@@ -32,6 +33,7 @@ static void DryReset(void)
   last_temp_tick = 0U;
   heater_percent = 0U;
   fan_percent = 0U;
+  blower_enabled = 0U;
 }
 
 static void DryInit(void)
@@ -42,16 +44,6 @@ static void DryInit(void)
 
 static HAL_StatusTypeDef set_fans(uint8_t percent)
 {
-  if (TaskComm485_RequestSetPercent(RS485_STATION_LEFT_FAN, percent) != HAL_OK)
-  {
-    AutoDevice_SetFault(AUTO_FAULT_485_LEFT_FAN_COMM);
-    return HAL_ERROR;
-  }
-  if (TaskComm485_RequestSetPercent(RS485_STATION_RIGHT_FAN, percent) != HAL_OK)
-  {
-    AutoDevice_SetFault(AUTO_FAULT_485_RIGHT_FAN_COMM);
-    return HAL_ERROR;
-  }
   if (TaskComm485_RequestSetPercent(RS485_STATION_BOTTOM_FAN, percent) != HAL_OK)
   {
     AutoDevice_SetFault(AUTO_FAULT_485_BOTTOM_FAN_COMM);
@@ -69,7 +61,7 @@ static HAL_StatusTypeDef set_exhaust_fan(uint8_t on)
     AutoDevice_SetFault(AUTO_FAULT_485_TOP_EXHAUST_COMM);
     return HAL_ERROR;
   }
-  if (AutoDevice_SetOutput(AUTO_OUTPUT_EXHAUST_FAN, on) != HAL_OK)
+  if (AutoDevice_SetTopFanRunning(on) != HAL_OK)
   {
     AutoDevice_SetFault(AUTO_FAULT_OUTPUT_COMMAND_FAILED);
     return HAL_ERROR;
@@ -85,16 +77,7 @@ static HAL_StatusTypeDef set_exhaust_fan(uint8_t on)
 
 static HAL_StatusTypeDef set_heaters(uint8_t percent)
 {
-  if (TaskComm485_RequestSetPercent(RS485_STATION_LEFT_HEATER, percent) != HAL_OK)
-  {
-    AutoDevice_SetFault(AUTO_FAULT_485_LEFT_HEATER_COMM);
-    return HAL_ERROR;
-  }
-  if (TaskComm485_RequestSetPercent(RS485_STATION_RIGHT_HEATER, percent) != HAL_OK)
-  {
-    AutoDevice_SetFault(AUTO_FAULT_485_RIGHT_HEATER_COMM);
-    return HAL_ERROR;
-  }
+
   if (TaskComm485_RequestSetPercent(RS485_STATION_BOTTOM_HEATER, percent) != HAL_OK)
   {
     AutoDevice_SetFault(AUTO_FAULT_485_BOTTOM_HEATER_COMM);
@@ -105,6 +88,8 @@ static HAL_StatusTypeDef set_heaters(uint8_t percent)
 
 static HAL_StatusTypeDef DryResume(uint16_t step_id)
 {
+  if (AutoDevice_SetBlower(blower_enabled) != HAL_OK ||
+      AutoDevice_SetOutput(AUTO_OUTPUT_SWING_MOTOR, blower_enabled) != HAL_OK) return HAL_ERROR;
   if ((step_id < 20U) || (step_id >= 100U))
   {
     return HAL_OK;
@@ -127,6 +112,9 @@ static HAL_StatusTypeDef DryResume(uint16_t step_id)
 
 static void dry_safe_stop(void)
 {
+  blower_enabled = 0U;
+  (void)AutoDevice_SetBlower(0U);
+  (void)AutoDevice_SetOutput(AUTO_OUTPUT_SWING_MOTOR, 0U);
   (void)set_heaters(0U);
   (void)set_fans(0U);
   (void)set_exhaust_fan(0U);
@@ -246,6 +234,9 @@ static AppFlowStepResult FanFullOn(AppFlowContext *ctx, const AppFlowStep *step)
   {
     return APP_FLOW_STEP_FAIL;
   }
+  blower_enabled = 1U;
+  if (AutoDevice_SetBlower(1U) != HAL_OK ||
+      AutoDevice_SetOutput(AUTO_OUTPUT_SWING_MOTOR, 1U) != HAL_OK) return APP_FLOW_STEP_FAIL;
   heater_percent = DRY_HEATER_FULL_PERCENT;
   if (set_heaters(heater_percent) != HAL_OK)
   {
@@ -380,6 +371,9 @@ static AppFlowStepResult HeaterOff(AppFlowContext *ctx, const AppFlowStep *step)
 {
   (void)ctx;
   (void)step;
+  blower_enabled = 0U;
+  if (AutoDevice_SetBlower(0U) != HAL_OK ||
+      AutoDevice_SetOutput(AUTO_OUTPUT_SWING_MOTOR, 0U) != HAL_OK) return APP_FLOW_STEP_FAIL;
   heater_percent = 0U;
   if ((set_fans(60U) != HAL_OK) ||
       (set_heaters(0U) != HAL_OK))
@@ -434,9 +428,9 @@ static const AppFlowStep steps[] = {
   AUTO_STEP(40, "DRY_TARGET_FAN_HEATER_FULL", 0U, 0U, FanTargetHeaterFullOn, "风机降到配方目标，开始温控"),
   AUTO_STEP(50, "DRY_RUNNING", 0U, 0U, DryRunning, "进入烘干运行状态"),
   AUTO_STEP(60, "DRY_TEMP_CONTROL", 0U, 0U, Monitor, "舱内温度保持配方目标温度"),
-  AUTO_STEP(70, "DRY_HEATER_OFF", 0U, 0U, HeaterOff, "关闭左右底部加热棒，调低风机功率"),
+  AUTO_STEP(70, "DRY_HEATER_OFF", 0U, 0U, HeaterOff, "关闭吹水机和底部加热棒，底部低速冷却"),
   AUTO_STEP(80, "DRY_COOL_AIR", 0U, 0U, CoolAir, "保持风机和排风扇冷却"),
-  AUTO_STEP(90, "DRY_FAN_OFF", 0U, 0U, FanOff, "关闭左右底部风机"),
+  AUTO_STEP(90, "DRY_FAN_OFF", 0U, 0U, FanOff, "关闭底部风机"),
   AUTO_STEP(95, "DRY_EXHAUST_FAN_OFF", 0U, 0U, ExhaustFanOff, "关闭排风扇"),
   AUTO_STEP(100, "REPORT_DRY_DONE", 0U, 0U, ReportDone, "上报烘干完成"),
 };

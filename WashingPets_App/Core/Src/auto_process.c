@@ -175,6 +175,7 @@ void AutoProcess_Init(void)
  */
 void AutoProcess_Start(void)
 {
+  if (TaskComm485_HardwareConfigBusy()) return;
   AutoDevice_ClearFault();
   /* 完整流程启动前切到自动输出仲裁，自动请求才允许作用于硬件。 */
   TaskOutput_SetAutoMode(1U);
@@ -318,6 +319,7 @@ void AutoProcess_RequestResume(void)
 
 void AutoProcess_RequestFull(void)
 {
+  if (TaskComm485_HardwareConfigBusy()) return;
   /*
    * 请求执行完整自动流程。
    *
@@ -342,6 +344,7 @@ void AutoProcess_RequestFull(void)
  */
 void AutoProcess_RequestStageTest(AutoProcessStage stage)
 {
+  if (TaskComm485_HardwareConfigBusy()) return;
   /*
    * 单段流程调试请求。
    *
@@ -634,6 +637,12 @@ static uint8_t start_pending_request(void)
  */
 void AutoProcess_Process(void)
 {
+  if (TaskComm485_HardwareConfigBusy())
+  {
+    full_request = 0U;
+    for (uint16_t i = 0U; i < AUTO_PROCESS_STAGE_COUNT; ++i) stage_test_request[i] = 0U;
+    return;
+  }
   uint16_t step_id;
 
   if (abort_request != 0U)

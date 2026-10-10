@@ -52,30 +52,23 @@ typedef struct
 } ValveTestPoint;
 
 static const uint8_t fan_stations[] = {
-  RS485_STATION_LEFT_FAN,
-  RS485_STATION_RIGHT_FAN,
   RS485_STATION_BOTTOM_FAN
 };
 static const uint8_t heater_stations[] = {
-  RS485_STATION_LEFT_HEATER,
-  RS485_STATION_RIGHT_HEATER,
   RS485_STATION_BOTTOM_HEATER
 };
 static const uint32_t fan_bits[] = {
-  TEST_BIT_LEFT_FAN, TEST_BIT_RIGHT_FAN, TEST_BIT_BOTTOM_FAN
+  TEST_BIT_BOTTOM_FAN
 };
 static const uint32_t heater_bits[] = {
-  TEST_BIT_LEFT_HEATER, TEST_BIT_RIGHT_HEATER, TEST_BIT_BOTTOM_HEATER
+  TEST_BIT_BOTTOM_HEATER
 };
 static const ValveTestPoint valve_tests[] = {
   {AUTO_OUTPUT_SHOWER_UPPER, TEST_BIT_SHOWER_UPPER},
   {AUTO_OUTPUT_SHOWER_MIDDLE, TEST_BIT_SHOWER_MIDDLE},
-  {AUTO_OUTPUT_SHOWER_LOWER, TEST_BIT_SHOWER_LOWER},
-  {AUTO_OUTPUT_SHOWER_REAR, TEST_BIT_SHOWER_REAR},
   {AUTO_OUTPUT_SELF_CLEAN_TOP_VALVE, TEST_BIT_CLEAN_TOP},
-  {AUTO_OUTPUT_SELF_CLEAN_FRONT_UPPER_VALVE, TEST_BIT_CLEAN_FRONT_UPPER},
-  {AUTO_OUTPUT_SELF_CLEAN_FRONT_LOWER_VALVE, TEST_BIT_CLEAN_FRONT_LOWER},
-  {AUTO_OUTPUT_SELF_CLEAN_REAR_VALVE, TEST_BIT_CLEAN_REAR},
+  {AUTO_OUTPUT_SELF_CLEAN_LOWER_VALVE, TEST_BIT_CLEAN_FRONT_UPPER},
+  {AUTO_OUTPUT_SELF_CLEAN_TOILET_VALVE, TEST_BIT_CLEAN_FRONT_LOWER},
   {AUTO_OUTPUT_BYPASS_VALVE, TEST_BIT_BYPASS}
 };
 
@@ -120,9 +113,7 @@ static uint8_t cabin_is_safe(void)
 {
   return ((AutoDevice_IsEmergencyStopped() == 0U) &&
           (AutoDevice_ReadInput(AUTO_INPUT_UPPER_DOOR_CLOSED) != 0U) &&
-          (AutoDevice_ReadInput(AUTO_INPUT_LOWER_DOOR_CLOSED) != 0U) &&
-          (AutoDevice_ReadInput(AUTO_INPUT_UPPER_LIGHT_CURTAIN) == 0U) &&
-          (AutoDevice_ReadInput(AUTO_INPUT_LOWER_LIGHT_CURTAIN) == 0U)) ? 1U : 0U;
+          (AutoDevice_ReadInput(AUTO_INPUT_LOWER_DOOR_CLOSED) != 0U)) ? 1U : 0U;
 }
 
 static void close_water_outputs(void)
@@ -130,7 +121,7 @@ static void close_water_outputs(void)
   uint8_t index;
 
   AutoDevice_SetAllShowerValves(0U);
-  for (index = 4U; index < (uint8_t)(sizeof(valve_tests) / sizeof(valve_tests[0])); ++index)
+  for (index = 2U; index < (uint8_t)(sizeof(valve_tests) / sizeof(valve_tests[0])); ++index)
   {
     (void)AutoDevice_SetOutput(valve_tests[index].output, 0U);
   }
@@ -143,10 +134,12 @@ static void self_test_outputs_off(void)
   uint8_t index;
 
   TaskComm485_SetSelfTestPressurePriority(0U);
+  (void)AutoDevice_SetBlower(0U);
+  (void)AutoDevice_SetTopFanRunning(0U);
   (void)AutoDevice_SetBoosterPumpRunning(0U);
   (void)TaskComm485_RequestSetProportionalValveAngle(0U);
   close_water_outputs();
-  for (index = 0U; index < 3U; ++index)
+  for (index = 0U; index < 1U; ++index)
   {
     (void)TaskComm485_ForceSetPercent(heater_stations[index], 0U);
     (void)TaskComm485_ForceSetPercent(fan_stations[index], 0U);
@@ -273,7 +266,7 @@ static TestStatus test_heater_deep(uint8_t index)
 
   current_step_id = (uint16_t)(30U + index);
   tested_bitmap |= heater_bits[index];
-  for (fan_index = 0U; fan_index < 3U; ++fan_index)
+  for (fan_index = 0U; fan_index < 1U; ++fan_index)
   {
     if (TaskComm485_RequestSetPercent(fan_stations[fan_index], config->deep_fan_percent) != HAL_OK)
     {
@@ -327,6 +320,15 @@ static TestStatus test_heater_deep(uint8_t index)
 
 static TestStatus monitor_pressure_safety(void)
 {
+  uint8_t pressure;
+  if (AppParam_BoosterPumpUsesRs485() &&
+      TaskComm485_GetBoosterPumpFeedback(&pressure) &&
+      pressure > AppParam_GetSelfTestConfig()->pressure_over_x10)
+  {
+    self_test_outputs_off();
+    AutoDevice_ReportFault(AUTO_FAULT_SELF_TEST_OVERPRESSURE, AUTO_REPORT_SENSOR_FAULT);
+    return TEST_STATUS_ABORT;
+  }
   return TEST_STATUS_PASS;
 }
 
@@ -341,7 +343,7 @@ static TestStatus drain_below_middle(void)
     return TEST_STATUS_PASS;
   }
   close_water_outputs();
-  (void)AutoDevice_SetOutput(AUTO_OUTPUT_SHOWER_REAR, 1U);
+  (void)AutoDevice_SetOutput(AUTO_OUTPUT_SELF_CLEAN_TOILET_VALVE, 1U);
   (void)AutoDevice_SetBoosterPumpPercent(config->valve_pressure_x10);
   if (AutoDevice_SetBoosterPumpRunning(1U) != HAL_OK)
   {
@@ -436,6 +438,7 @@ static TestStatus test_valve(const ValveTestPoint *test, uint8_t index)
   uint32_t stable_start = 0U;
   TestStatus control;
 
+  if (!AppParam_BoosterPumpUsesRs485()) return TEST_STATUS_PASS;
   current_step_id = (uint16_t)(60U + index);
   tested_bitmap |= test->bit;
   tested_bitmap |= TEST_BIT_BOOSTER;
@@ -454,7 +457,25 @@ static TestStatus test_valve(const ValveTestPoint *test, uint8_t index)
     close_water_outputs();
     return TEST_STATUS_FAIL;
   }
-  (void)AutoDevice_SetBoosterPumpPercent(config->valve_pressure_x10);
+  uint32_t writes = TaskComm485_GetStationSuccessCount(RS485_STATION_BOOSTER_PUMP);
+  TaskComm485_SetSelfTestPressurePriority(1U);
+  if (TaskComm485_ForceSetBoosterPumpPercent(config->valve_pressure_x10) != HAL_OK)
+  {
+    self_test_outputs_off();
+    return TEST_STATUS_FAIL;
+  }
+  start = HAL_GetTick();
+  while (TaskComm485_GetStationSuccessCount(RS485_STATION_BOOSTER_PUMP) == writes)
+  {
+    control = poll_control();
+    if (control != TEST_STATUS_PASS ||
+        HAL_GetTick() - start >= config->communication_timeout_ms)
+    {
+      self_test_outputs_off();
+      return control == TEST_STATUS_PASS ? TEST_STATUS_FAIL : control;
+    }
+    osDelay(SELF_TEST_LOOP_MS);
+  }
   if (AutoDevice_SetBoosterPumpRunning(1U) != HAL_OK)
   {
     self_test_outputs_off();
@@ -469,7 +490,14 @@ static TestStatus test_valve(const ValveTestPoint *test, uint8_t index)
       self_test_outputs_off();
       return control;
     }
-    if (stable_start == 0U)
+    uint8_t pressure;
+    if (monitor_pressure_safety() == TEST_STATUS_ABORT) return TEST_STATUS_ABORT;
+    if (!TaskComm485_GetBoosterPumpFeedback(&pressure) ||
+        pressure < config->pressure_min_x10 || pressure > config->pressure_max_x10)
+    {
+      stable_start = 0U;
+    }
+    else if (stable_start == 0U)
     {
       stable_start = HAL_GetTick();
     }
@@ -593,12 +621,14 @@ static void execute_self_test(SelfTestMode mode)
 {
   TestStatus status = TEST_STATUS_PASS;
   uint8_t index;
-  uint8_t valve_count = (mode == SELF_TEST_MODE_DEEP) ? 9U : 4U;
+  uint8_t valve_count = AppParam_BoosterPumpUsesRs485() ?
+      ((mode == SELF_TEST_MODE_DEEP) ? 6U : 2U) : 0U;
 
   tested_bitmap = 0U;
   passed_bitmap = 0U;
   completed_items = 0U;
-  total_items = (mode == SELF_TEST_MODE_DEEP) ? 18U : 12U;
+  total_items = 3U + valve_count + (AppParam_BoosterPumpUsesRs485() ? 1U : 0U) +
+                (mode == SELF_TEST_MODE_DEEP ? 1U : 0U);
   progress_x10 = 0U;
   current_step_id = 1U;
   TaskComm485_ReleaseNonzero(COMM485_INHIBIT_STARTUP |
@@ -608,13 +638,13 @@ static void execute_self_test(SelfTestMode mode)
   self_test_outputs_off();
   TaskComm485_ReleaseNonzero(COMM485_INHIBIT_SAFE_STOP);
 
-  for (index = 0U; index < 3U; ++index)
+  for (index = 0U; index < 1U; ++index)
   {
     status = run_with_retry(test_fan, index);
     if (status == TEST_STATUS_ABORT) break;
     item_done();
   }
-  for (index = 0U; (index < 3U) && (status != TEST_STATUS_ABORT); ++index)
+  for (index = 0U; (index < 1U) && (status != TEST_STATUS_ABORT); ++index)
   {
     status = run_with_retry((mode == SELF_TEST_MODE_DEEP) ?
                             test_heater_deep : test_heater_quick, index);
@@ -633,7 +663,7 @@ static void execute_self_test(SelfTestMode mode)
     if (status == TEST_STATUS_ABORT) break;
     item_done();
   }
-  if (status != TEST_STATUS_ABORT)
+  if (status != TEST_STATUS_ABORT && AppParam_BoosterPumpUsesRs485())
   {
     item_done();
   }
@@ -694,7 +724,7 @@ uint8_t TaskSelfTest_CanStart(SelfTestMode mode)
   TaskComm485EnvironmentData environment = {0};
   AutoSensorData sensors = {0};
 
-  if ((mode > SELF_TEST_MODE_DEEP) || (running != 0U) ||
+  if (TaskComm485_HardwareConfigBusy() || (mode > SELF_TEST_MODE_DEEP) || (running != 0U) ||
       (TaskOutput_IsAutoMode() == 0U) ||
       (AutoProcess_IsRunning() != 0U) || (TaskClean_IsRunning() != 0U) ||
       (AutoDevice_GetFault() != AUTO_FAULT_NONE) ||

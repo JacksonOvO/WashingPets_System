@@ -19,7 +19,7 @@
 #define PARAM_FLASH_SIZE     0x20000U
 
 #define APP_PARAM_MAGIC      0x4150524DU  /* "APRM" */
-#define APP_PARAM_VERSION    0x0009U
+#define APP_PARAM_VERSION    0x000BU
 #define APP_RECIPE_PROTOCOL_VERSION 3U
 #define APP_RECIPE_DEFAULT_BATH_LIQUID_MS 3000U
 #define APP_RECIPE_MAX_BATH_LIQUID_MS 60000U
@@ -114,6 +114,25 @@ typedef struct
   AppSelfTestConfig_t self_test;
   uint8_t reserved[16];
 } AppParam_t;
+
+/* Stored in reserved[4..7]; reserved[0..3] remains the shared revision. */
+typedef struct
+{
+  uint8_t fan_pwm;
+  uint8_t temperature_mask;
+  uint8_t lower_door_bypass;
+  uint8_t host_command_bypass;
+} AppHardwareConfig_t;
+_Static_assert(sizeof(AppHardwareConfig_t) == 4U, "hardware protocol size");
+
+uint8_t AppParam_BoosterPumpUsesRs485(void);
+void AppParam_CommitBoosterPumpMode(uint8_t mode);
+const AppHardwareConfig_t *AppParam_GetHardwareConfig(void);
+uint8_t AppParam_ValidateHardwareConfig(const AppHardwareConfig_t *config);
+uint8_t AppParam_HardwareConfigAllowed(void);
+/* Only the comm485 configuration transaction may commit a live change. */
+void AppParam_CommitHardwareConfig(const AppHardwareConfig_t *config);
+uint8_t AppParam_IsSavePending(void);
 
 void AppParam_Init(void);
 const AppParam_t *AppParam_Get(void);

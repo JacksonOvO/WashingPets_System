@@ -325,6 +325,60 @@ uint8_t AppParam_ValidateSelfTestConfig(const AppSelfTestConfig_t *config)
   return 1U;
 }
 
+static void hardware_defaults(AppParam_t *param)
+{
+  AppHardwareConfig_t config = {FAN_USE_PWM_MODULE,
+      RS485_TEMPERATURE_CHANNEL_ENABLE_MASK, AUTO_LOWER_DOOR_SENSOR_BYPASS,
+      AUTO_DEVICE_HOST_COMMAND_BYPASS};
+  memcpy(&param->reserved[4], &config, sizeof(config));
+  param->reserved[8] = 0U;
+}
+
+uint8_t AppParam_BoosterPumpUsesRs485(void)
+{
+  return app_param.reserved[8] == 1U;
+}
+
+void AppParam_CommitBoosterPumpMode(uint8_t mode)
+{
+  app_param.reserved[8] = mode;
+  AppParam_SetRevision(AppParam_GetRevision() + 1U);
+  AppParam_RequestSave();
+}
+
+const AppHardwareConfig_t *AppParam_GetHardwareConfig(void)
+{
+  return (const AppHardwareConfig_t *)&app_param.reserved[4];
+}
+
+uint8_t AppParam_ValidateHardwareConfig(const AppHardwareConfig_t *config)
+{
+  return (config != NULL && config->fan_pwm <= 1U &&
+          config->temperature_mask <= 0x0FU && config->lower_door_bypass <= 1U &&
+          config->host_command_bypass <= 1U) ? 1U : 0U;
+}
+
+uint8_t AppParam_HardwareConfigAllowed(void)
+{
+  return ((TaskOutput_IsAutoMode() == 0U) &&
+          (AutoDevice_IsEmergencyStopped() == 0U) && AppParam_CanSaveNow()) ? 1U : 0U;
+}
+
+void AppParam_CommitHardwareConfig(const AppHardwareConfig_t *config)
+{
+  uint32_t primask = __get_PRIMASK();
+  __disable_irq();
+  memcpy(&app_param.reserved[4], config, sizeof(*config));
+  if (primask == 0U) __enable_irq();
+  AppParam_SetRevision(AppParam_GetRevision() + 1U);
+  AppParam_RequestSave();
+}
+
+uint8_t AppParam_IsSavePending(void)
+{
+  return (save_requested || save_in_progress) ? 1U : 0U;
+}
+
 static void load_defaults(void)
 {
   uint8_t index;
@@ -358,6 +412,7 @@ static void load_defaults(void)
   app_param.self_test.fill_timeout_ms = 180000U;
   app_param.self_test.hot_observe_ms = 60000U;
   write_u32_le(&app_param.reserved[0], 0U);
+  hardware_defaults(&app_param);
 
   /*
    * 这些值只用于软件联调，现场测试前应由上位机写入正式工艺参数。
@@ -406,7 +461,9 @@ static uint8_t flash_param_is_valid(const AppParam_t *param)
       (param->thyristor_station == 0U) ||
       (param->thyristor_station > 247U) ||
       (param->active_recipe >= (uint8_t)APP_RECIPE_COUNT) ||
-      (AppParam_ValidateSelfTestConfig(&param->self_test) == 0U))
+      (AppParam_ValidateSelfTestConfig(&param->self_test) == 0U) ||
+      (param->reserved[8] > 1U) ||
+      !AppParam_ValidateHardwareConfig((const AppHardwareConfig_t *)&param->reserved[4]))
   {
     return 0U;
   }
@@ -425,11 +482,11 @@ static uint8_t flash_param_is_valid(const AppParam_t *param)
   return 1U;
 }
 
-/* V7 used total milliseconds; V8 used cycles but still had fixed 3s dosing. */
+/* V7: duration; V8: cycles; V9: configurable dosing; V10: runtime hardware. */
 static uint8_t migrate_legacy_v7_v8(const AppParam_t *legacy)
 {
   if ((legacy->magic != APP_PARAM_MAGIC) ||
-      ((legacy->version != 7U) && (legacy->version != 8U)) ||
+      ((legacy->version != 7U) && (legacy->version != 8U) && (legacy->version != 9U) && (legacy->version != 10U)) ||
       (legacy->length != sizeof(*legacy)) || (legacy->crc32 != param_crc32(legacy)))
   {
     return 0U;
@@ -446,8 +503,11 @@ static uint8_t migrate_legacy_v7_v8(const AppParam_t *legacy)
                                                   recipe->bath_on_time_ms,
                                                   recipe->bath_pause_time_ms);
     }
-    recipe->bath_liquid_time_ms = APP_RECIPE_DEFAULT_BATH_LIQUID_MS;
+    if (legacy->version < 9U)
+      recipe->bath_liquid_time_ms = APP_RECIPE_DEFAULT_BATH_LIQUID_MS;
   }
+  if (legacy->version < 10U) hardware_defaults(&param_write_image);
+  param_write_image.reserved[8] = 0U;
   param_write_image.version = APP_PARAM_VERSION;
   param_write_image.crc32 = param_crc32(&param_write_image);
   if (flash_param_is_valid(&param_write_image) == 0U) return 0U;
@@ -491,6 +551,7 @@ static uint8_t migrate_legacy_v4(const AppParamLegacyV4_t *legacy)
     copy_legacy_recipe(&app_param.recipes[index], &legacy->recipes[index]);
   }
   memcpy(app_param.reserved, legacy->reserved, sizeof(legacy->reserved));
+  hardware_defaults(&app_param);
   app_param.crc32 = param_crc32(&app_param);
   return 1U;
 }
@@ -527,6 +588,7 @@ static uint8_t migrate_legacy_v5(const AppParamLegacyV5_t *legacy)
     copy_legacy_recipe(&app_param.recipes[index], &legacy->recipes[index]);
   }
   memcpy(app_param.reserved, legacy->reserved, sizeof(legacy->reserved));
+  hardware_defaults(&app_param);
   app_param.crc32 = param_crc32(&app_param);
   return 1U;
 }
@@ -567,6 +629,7 @@ static uint8_t migrate_legacy_v6(const AppParamLegacyV6_t *legacy)
   }
   app_param.self_test = legacy->self_test;
   memcpy(app_param.reserved, legacy->reserved, sizeof(legacy->reserved));
+  hardware_defaults(&app_param);
   app_param.crc32 = param_crc32(&app_param);
   return 1U;
 }
@@ -640,7 +703,7 @@ HAL_StatusTypeDef AppParam_SaveNow(void)
   uint32_t change_counter;
   uint32_t primask;
 
-  if (AppParam_CanSaveNow() == 0U)
+  if (TaskComm485_HardwareConfigBusy() || AppParam_CanSaveNow() == 0U)
   {
     return HAL_BUSY;
   }
@@ -726,9 +789,7 @@ uint8_t AppParam_CanSaveNow(void)
   return 1U;
 #else
   static const uint8_t thyristor_stations[] = {
-    RS485_STATION_LEFT_FAN, RS485_STATION_RIGHT_FAN,
     RS485_STATION_BOTTOM_FAN, RS485_STATION_TOP_EXHAUST_FAN,
-    RS485_STATION_LEFT_HEATER, RS485_STATION_RIGHT_HEATER,
     RS485_STATION_BOTTOM_HEATER
   };
   uint8_t index;
@@ -925,8 +986,13 @@ HAL_StatusTypeDef AppParam_SetSelfTestConfigDirect(const AppSelfTestConfig_t *co
 void AppParam_RestoreDefaults(void)
 {
   uint32_t revision = AppParam_GetRevision();
+  AppHardwareConfig_t hardware = *AppParam_GetHardwareConfig();
+  uint8_t pump_mode = AppParam_BoosterPumpUsesRs485();
 
   load_defaults();
+  /* Recipe/global reset must not switch live hardware outside its transaction. */
+  memcpy(&app_param.reserved[4], &hardware, sizeof(hardware));
+  app_param.reserved[8] = pump_mode;
   AppParam_SetRevision(revision + 1U);
   AppParam_RequestSave();
 }

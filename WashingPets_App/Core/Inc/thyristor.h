@@ -24,6 +24,12 @@ ThyristorStatus Thyristor_WriteRegister(uint8_t station, uint16_t reg,
                                         uint16_t value);
 ThyristorStatus Thyristor_ReadRegister(uint8_t station, uint16_t reg,
                                        uint16_t *value);
+/* Bounded Modbus block transfers, also accepting QX's CRC-checked exception frame. */
+#define THYRISTOR_MAX_REGISTERS 16U
+ThyristorStatus Thyristor_WriteRegisters(uint8_t station, uint16_t reg,
+                                       const uint16_t *values, uint16_t count);
+ThyristorStatus Thyristor_ReadRegisters(uint8_t station, uint16_t reg,
+                                      uint16_t *values, uint16_t count);
 ThyristorStatus Thyristor_SetVoltagePercent(uint8_t station, uint8_t percent);
 ThyristorStatus Thyristor_GetVoltagePercent(uint8_t station, uint8_t *percent);
 

@@ -6,8 +6,14 @@
 #include "../../Core/Src/auto_stage_bath.c"
 
 static AppRecipe_t recipe;
+static uint8_t selection, liquid_low_mask;
+uint8_t AppParam_BoosterPumpUsesRs485(void) { return 0; }
 static uint8_t outputs[AUTO_OUTPUT_COUNT];
 static uint32_t tick;
+uint32_t HAL_GetTick(void) { return tick; }
+void osDelay(uint32_t ms) { tick += ms; }
+uint8_t AutoDevice_GetBathLiquidSelection(void) { return selection; }
+uint8_t AutoDevice_IsBoosterPumpRunning(void) { return outputs[AUTO_OUTPUT_BOOSTER_PUMP_RUN]; }
 static uint8_t emergency, paused, stop_requested, low_water, door_open, sync_fail;
 static AutoFaultCode fault;
 
@@ -18,6 +24,8 @@ uint8_t AutoDevice_IsStopRequested(void) { return stop_requested; }
 uint8_t AutoDevice_IsPaused(void) { return paused; }
 uint8_t AutoDevice_ReadInput(AutoInputPoint point)
 {
+  if (point >= AUTO_INPUT_BATH_LIQUID_LOW && point <= AUTO_INPUT_DEODORIZER_LOW)
+    return (liquid_low_mask >> (point - AUTO_INPUT_BATH_LIQUID_LOW)) & 1U;
   if (point == AUTO_INPUT_TANK_LOW) return low_water;
   if (point == AUTO_INPUT_UPPER_DOOR_CLOSED || point == AUTO_INPUT_LOWER_DOOR_CLOSED)
     return !door_open;
@@ -36,10 +44,10 @@ void AutoDevice_AllDangerousOutputsOff(void) { memset(outputs, 0, sizeof(outputs
 HAL_StatusTypeDef AutoDevice_SetOutput(AutoOutputPoint point, uint8_t on)
 {
   if (recipe.bath_liquid_time_ms == 0 &&
-      (point == AUTO_OUTPUT_SCREW_PUMP || point == AUTO_OUTPUT_DISINFECTANT_VALVE))
+      (point == AUTO_OUTPUT_BATH_PUMP || point == AUTO_OUTPUT_BATH_LIQUID_VALVE))
     assert(!on);
   outputs[point] = on;
-  assert(!(outputs[AUTO_OUTPUT_SCREW_PUMP] && outputs[AUTO_OUTPUT_BOOSTER_PUMP_RUN]));
+  assert(!(outputs[AUTO_OUTPUT_BATH_PUMP] && outputs[AUTO_OUTPUT_BOOSTER_PUMP_RUN]));
   return HAL_OK;
 }
 HAL_StatusTypeDef AutoDevice_SetBoosterPumpRunning(uint8_t on)
@@ -50,6 +58,7 @@ HAL_StatusTypeDef AutoDevice_SetBoosterPumpPercent(uint8_t p) { (void)p; return 
 void AutoDevice_SetAllShowerValves(uint8_t on)
 {
   outputs[AUTO_OUTPUT_SHOWER_UPPER] = on;
+  outputs[AUTO_OUTPUT_SHOWER_MIDDLE] = on;
 }
 HAL_StatusTypeDef TaskOutput_Sync(uint32_t ms) { (void)ms; return sync_fail ? HAL_ERROR : HAL_OK; }
 uint8_t TaskOutput_GetActual(AutoOutputPoint point) { return outputs[point]; }
@@ -65,6 +74,7 @@ static void setup(AppFlowContext *ctx, uint32_t count)
   recipe.pipe_temp_tolerance_x10 = 20;
   emergency = paused = stop_requested = low_water = door_open = sync_fail = 0;
   fault = 0;
+  liquid_low_mask = 0;
   tick = 0;
   AutoDevice_AllDangerousOutputsOff();
   stage.init();
@@ -98,7 +108,7 @@ static void run_cycles(uint32_t count, uint8_t pause_test, uint8_t wrap, uint32_
       paused = 0;
       pause_mask |= bit;
     }
-    feed_ms += outputs[AUTO_OUTPUT_SCREW_PUMP] * 10;
+    feed_ms += outputs[AUTO_OUTPUT_BATH_PUMP] * 10;
     water_ms += outputs[AUTO_OUTPUT_BOOSTER_PUMP_RUN] * 10;
     tick += 10;
   }
@@ -106,8 +116,8 @@ static void run_cycles(uint32_t count, uint8_t pause_test, uint8_t wrap, uint32_
   assert(completed_cycles == count);
   assert(feed_ms == count * dose_ms);
   assert(water_ms == (count ? count * 2000 + 5000 : 0));
-  assert(!outputs[AUTO_OUTPUT_SCREW_PUMP] && !outputs[AUTO_OUTPUT_BOOSTER_PUMP_RUN]);
-  assert(!outputs[AUTO_OUTPUT_DISINFECTANT_VALVE] && !outputs[AUTO_OUTPUT_SHOWER_UPPER]);
+  assert(!outputs[AUTO_OUTPUT_BATH_PUMP] && !outputs[AUTO_OUTPUT_BOOSTER_PUMP_RUN]);
+  assert(!outputs[AUTO_OUTPUT_BATH_LIQUID_VALVE] && !outputs[AUTO_OUTPUT_SHOWER_UPPER]);
   if (pause_test) assert(pause_mask == 7);
 }
 
@@ -134,7 +144,25 @@ int main(void)
     for (unsigned i = 0; i < 1000 && !ctx.failed; ++i)
     { AppFlow_Process(&ctx); tick += 10; }
     assert(ctx.failed);
-    assert(!outputs[AUTO_OUTPUT_SCREW_PUMP] && !outputs[AUTO_OUTPUT_BOOSTER_PUMP_RUN]);
+    assert(!outputs[AUTO_OUTPUT_BATH_PUMP] && !outputs[AUTO_OUTPUT_BOOSTER_PUMP_RUN]);
   }
-  puts("Bath: cycles, exact dosing/water times, pause/resume, tick wrap and safe stop PASS");
+  for (selection = 0; selection < 4; ++selection)
+  {
+    setup(&ctx, 1);
+    assert(apply_phase(BATH_FEED) == HAL_OK);
+    for (unsigned i = 0; i < 4; ++i)
+      assert(outputs[AUTO_OUTPUT_BATH_LIQUID_VALVE + i] == (i == selection));
+    assert(outputs[AUTO_OUTPUT_BATH_PUMP] && !outputs[AUTO_OUTPUT_SELF_CLEAN_PUMP]);
+  }
+  for (selection = 0; selection < 4; ++selection)
+  {
+    setup(&ctx, 1);
+    liquid_low_mask = 15U ^ (1U << selection);
+    assert(CheckLiquid(&ctx, NULL) == APP_FLOW_STEP_DONE);
+    liquid_low_mask = 1U << selection;
+    assert(CheckLiquid(&ctx, NULL) == APP_FLOW_STEP_FAIL);
+    assert(fault == AUTO_FAULT_BATH_LIQUID_LOW);
+    assert(!outputs[AUTO_OUTPUT_BATH_PUMP]);
+  }
+  puts("Bath: four selected liquid inputs, cycles, exact dosing/water times, pause/resume, tick wrap and safe stop PASS");
 }

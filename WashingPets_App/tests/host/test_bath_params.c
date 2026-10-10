@@ -2,6 +2,22 @@
 #include <stdio.h>
 #include "../../Core/Src/app_param.c"
 
+static uint8_t automatic, emergency, running, paused, dangerous, percent;
+uint32_t HAL_GetTick(void) { return 100U; }
+uint32_t __get_PRIMASK(void) { return 0U; }
+void __disable_irq(void) { }
+void __enable_irq(void) { }
+uint8_t TaskOutput_IsAutoMode(void) { return automatic; }
+uint8_t AutoDevice_IsEmergencyStopped(void) { return emergency; }
+uint8_t AutoProcess_IsRunning(void) { return running; }
+uint8_t TaskClean_IsRunning(void) { return running; }
+uint8_t TaskSelfTest_IsRunning(void) { return running; }
+uint8_t AutoDevice_IsPaused(void) { return paused; }
+uint8_t TaskOutput_HasDangerousOutputActive(void) { return dangerous; }
+uint8_t TaskComm485_GetLastBoosterPumpRunning(void) { return 0U; }
+uint8_t TaskComm485_GetLastProportionalValveAngle(void) { return 0U; }
+uint8_t TaskComm485_GetLastPercent(uint8_t station) { (void)station; return percent; }
+
 int main(void)
 {
   load_defaults();
@@ -101,5 +117,54 @@ int main(void)
   assert(AppParam_ValidateRecipe(&converted));
   converted.bath_liquid_time_ms = 0;
   assert(AppParam_ValidateRecipe(&converted));
-  puts("Parameters: V4-V8 migration, V9 preservation, dosing bounds and CRC PASS");
+  AppParam_t old9 = app_param;
+  old9.version = 9U;
+  memset(&old9.reserved[4], 0xA5, 4U);
+  old9.recipes[0].bath_liquid_time_ms = 7800U;
+  old9.crc32 = param_crc32(&old9);
+  assert(migrate_legacy_v7_v8(&old9));
+  assert(flash_param_is_valid(&app_param));
+  assert(!memcmp(old9.recipes, app_param.recipes, sizeof(old9.recipes)));
+  assert(!memcmp(old9.reserved, app_param.reserved, 4U));
+  AppHardwareConfig_t defaults = {0U, 11U, 0U, 0U};
+  assert(sizeof(defaults) == 4U);
+  assert(!memcmp(AppParam_GetHardwareConfig(), &defaults, 4U));
+  AppHardwareConfig_t config = {1U, 15U, 1U, 1U};
+  assert(AppParam_ValidateHardwareConfig(&config));
+  assert(!AppParam_ValidateHardwareConfig(NULL));
+  for (unsigned field = 0U; field < 4U; ++field)
+  {
+    AppHardwareConfig_t invalid = config;
+    ((uint8_t *)&invalid)[field] = field == 1U ? 16U : 2U;
+    assert(!AppParam_ValidateHardwareConfig(&invalid));
+  }
+  assert(AppParam_HardwareConfigAllowed());
+  uint8_t *flags[] = {&automatic, &emergency, &running, &paused, &dangerous, &percent};
+  for (unsigned i = 0U; i < sizeof(flags)/sizeof(flags[0]); ++i)
+  {
+    *flags[i] = 1U;
+    assert(!AppParam_HardwareConfigAllowed());
+    *flags[i] = 0U;
+  }
+  uint32_t revision = AppParam_GetRevision();
+  AppParam_CommitHardwareConfig(&config);
+  assert(AppParam_GetRevision() == revision + 1U && AppParam_IsSavePending());
+  assert(!memcmp(AppParam_GetHardwareConfig(), &config, 4U));
+  app_param.crc32 = param_crc32(&app_param);
+  assert(flash_param_is_valid(&app_param));
+  assert(!migrate_legacy_v7_v8(&app_param));
+  AppParam_CommitBoosterPumpMode(1U);
+  assert(AppParam_BoosterPumpUsesRs485());
+  AppParam_t old10 = app_param;
+  old10.version = 10U;
+  old10.crc32 = param_crc32(&old10);
+  assert(migrate_legacy_v7_v8(&old10));
+  assert(app_param.version == 11U && !AppParam_BoosterPumpUsesRs485());
+  assert(!memcmp(old10.reserved, app_param.reserved, 8U));
+  assert(!memcmp(old10.recipes, app_param.recipes, sizeof(old10.recipes)));
+  AppParam_CommitBoosterPumpMode(1U);
+  AppParam_RestoreDefaults();
+  assert(AppParam_BoosterPumpUsesRs485());
+  assert(!memcmp(AppParam_GetHardwareConfig(), &config, 4U));
+  puts("Parameters: V4-V10 migration, V11 hardware/pump, idle guards, recipe preservation and CRC PASS");
 }

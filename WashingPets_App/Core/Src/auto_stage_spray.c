@@ -113,7 +113,7 @@ static AppFlowStepResult ValvesPumpOn(AppFlowContext *ctx, const AppFlowStep *st
   (void)step;
   /* The water-tank task owns refill valves during washing. */
   (void)AutoDevice_SetOutput(AUTO_OUTPUT_BYPASS_VALVE, 0U);
-  (void)AutoDevice_SetOutput(AUTO_OUTPUT_SELF_CLEAN_REAR_VALVE, 0U);
+  (void)AutoDevice_SetOutput(AUTO_OUTPUT_SELF_CLEAN_TOILET_VALVE, 0U);
   AutoDevice_SetAllShowerValves(1U);
   (void)AutoDevice_SetBoosterPumpPercent(recipe->spray_pressure_level);
   (void)AutoDevice_SetBoosterPumpRunning(1U);

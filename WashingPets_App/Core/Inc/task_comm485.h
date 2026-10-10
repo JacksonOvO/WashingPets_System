@@ -2,6 +2,7 @@
 #define TASK_COMM485_H
 
 #include "stm32f4xx_hal.h"
+#include "app_param.h"
 
 typedef struct
 {
@@ -26,14 +27,21 @@ typedef enum
   COMM485_INHIBIT_SAFE_STOP = (1UL << 1),
   COMM485_INHIBIT_PAUSE = (1UL << 2),
   COMM485_INHIBIT_MODE_CHANGE = (1UL << 3),
-  COMM485_INHIBIT_FAULT = (1UL << 4)
+  COMM485_INHIBIT_FAULT = (1UL << 4),
+  COMM485_INHIBIT_CONFIG = (1UL << 5)
 } TaskComm485InhibitReason;
 
 void TaskComm485_Create(void);
+HAL_StatusTypeDef TaskComm485_RequestHardwareConfig(const AppHardwareConfig_t *config);
+HAL_StatusTypeDef TaskComm485_RequestBoosterPumpMode(uint8_t mode);
+uint8_t TaskComm485_HardwareConfigBusy(void);
+uint8_t TaskComm485_TakeHardwareConfigResult(HAL_StatusTypeDef *result);
 
 /*
  * 将指定站号可控硅的输出百分比命令放入 RS485 队列。
  * station 有效范围为 1～247，percent 有效范围为 0～100。
+ * PWM模式下10/11/12/13为逻辑风机编号，内部映射站号30的CH1/2/3/4。
+ * 不可直接向物理站号30发送此百分比接口命令。
  */
 HAL_StatusTypeDef TaskComm485_RequestSetPercent(uint8_t station,
                                                 uint8_t percent);

@@ -74,7 +74,7 @@ static void CleanTask(void *argument)
                            osFlagsWaitAny,
                            osWaitForever);
 
-    if (clean_stop_requested != 0U)
+    if (clean_stop_requested != 0U || TaskComm485_HardwareConfigBusy())
     {
       CleanProcess_Reset();
       clean_running = 0U;
@@ -115,7 +115,8 @@ static void CleanTask(void *argument)
         if (CleanProcess_Resume() != HAL_OK)
         {
           AutoDevice_AllDangerousOutputsOff();
-          AutoDevice_SetFault(AUTO_FAULT_OUTPUT_COMMAND_FAILED);
+          if (AutoDevice_GetFault() == AUTO_FAULT_NONE)
+            AutoDevice_SetFault(AUTO_FAULT_OUTPUT_COMMAND_FAILED);
           AutoDevice_Report(AUTO_REPORT_SENSOR_FAULT);
           clean_failed = 1U;
           break;
@@ -124,9 +125,7 @@ static void CleanTask(void *argument)
       }
 
       if ((AutoDevice_ReadInput(AUTO_INPUT_UPPER_DOOR_CLOSED) == 0U) ||
-          (AutoDevice_ReadInput(AUTO_INPUT_LOWER_DOOR_CLOSED) == 0U) ||
-          (AutoDevice_ReadInput(AUTO_INPUT_UPPER_LIGHT_CURTAIN) != 0U) ||
-          (AutoDevice_ReadInput(AUTO_INPUT_LOWER_LIGHT_CURTAIN) != 0U))
+          (AutoDevice_ReadInput(AUTO_INPUT_LOWER_DOOR_CLOSED) == 0U))
       {
         AutoDevice_AllDangerousOutputsOff();
         AutoDevice_SetFault(AUTO_FAULT_SELF_CLEAN_NOT_ALLOWED);
@@ -202,6 +201,7 @@ void TaskClean_Create(void)
  */
 void TaskClean_Request(void)
 {
+  if (TaskComm485_HardwareConfigBusy()) return;
   if (AutoDevice_IsEmergencyStopped() != 0U)
   {
     return;

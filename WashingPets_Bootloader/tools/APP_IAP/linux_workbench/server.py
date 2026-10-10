@@ -58,28 +58,81 @@ CMD_SET_PARAM = 0x41
 CMD_SAVE_PARAM = 0x42
 CMD_RESTORE_PARAM = 0x43
 
+INPUT_GPIO_COUNT = 19
 INPUT_NAMES = [
-    "IN1 消毒液低液位", "IN2 沐浴液低液位", "IN3 芬香液低液位", "IN4 柔顺液低液位",
-    "IN5 除螨液低液位", "IN6 护毛素低液位", "IN7 蓄水箱下液位", "IN8 蓄水箱中液位",
-    "IN9 蓄水箱上液位", "IN10 急停开关", "IN11 排水管液位", "IN12 上门光幕",
-    "IN13 下门光幕", "IN14 上门关闭到位", "IN15 下门关闭到位", "IN16 左电插锁到位",
-    "IN17 右电插锁到位", "IN18 后电插锁1到位", "IN19 后电插锁2到位",
+    "IN1 沐浴液1低液位",
+    "IN2 沐浴液2低液位",
+    "IN3 沐浴液3低液位",
+    "IN4 沐浴液4低液位",
+    "IN5 清洁液低液位",
+    "IN6 消毒液低液位",
+    "IN7 水箱低液位",
+    "IN8 水箱中液位",
+    "IN9 水箱高液位",
+    "IN10 急停开关",
+    "IN11 上门开门到位",
+    "IN12 备用1",
+    "IN13 备用2",
+    "IN14 备用3",
+    "IN15 备用4",
+    "IN16 备用5",
+    "IN17 备用6",
+    "IN18 备用7",
+    "IN19 备用8",
+    "上门关门到位 PF15",
+    "下门关门到位 PG0",
 ]
 
 OUTPUT_NAMES = [
-    "OUT1 排气扇", "OUT2 制氧机", "OUT3 空气清新剂", "OUT4 手动清洁电磁阀", "OUT5 排风紫外线灯",
-    "OUT6 热水器", "OUT7 自来水阀", "OUT8 蠕动泵", "OUT9 淋浴阀上", "OUT10 淋浴阀中",
-    "OUT11 淋浴阀下", "OUT12 淋浴阀后", "OUT13 沐浴液阀", "OUT14 芬香液阀", "OUT15 柔顺液阀",
-    "OUT16 除螨液阀", "OUT17 护毛素阀", "OUT18 消毒液阀", "OUT19 紫外线灯", "OUT20 自清洁顶部阀",
-    "OUT21 自清洁前侧上阀", "OUT22 自清洁前侧下阀", "OUT23 自清洁后端阀", "OUT24 旁通阀",
-    "OUT25 臭氧发生器", "OUT26 舱内照明", "OUT27 正门灯带", "OUT28 LOGO发光板", "OUT29 增压泵",
-    "OUT30 自动关门", "OUT31 闭门器停止", "OUT32 上门电磁锁", "OUT33 下门电磁锁",
-    "OUT34 左电插锁", "OUT35 右电插锁", "OUT36 后电插锁1", "OUT37 后电插锁2",
-    "OUT38 自动开门", "OUT39 热水器阀", "OUT40 主板电源控制",
+    "OUT1 制氧机",
+    "OUT2 排风紫外线灯",
+    "OUT3 舱内紫外线灯",
+    "OUT4 吹水机",
+    "OUT5 摇摆电机",
+    "OUT6 底板升降",
+    "OUT7 主板电源控制",
+    "OUT8 空气清新喷雾",
+    "OUT9 沐浴蠕动泵",
+    "OUT10 自清洁蠕动泵",
+    "OUT11 舱内照明",
+    "OUT12 正门灯带",
+    "OUT13 闭门器开门",
+    "OUT14 闭门器关门",
+    "OUT15 闭门器停止",
+    "OUT16 手动清洁阀",
+    "OUT17 自来水阀",
+    "OUT18 热水器阀",
+    "OUT19 旁通阀",
+    "OUT20 淋浴阀中",
+    "OUT21 淋浴阀上",
+    "OUT22 自清洁阀上",
+    "OUT23 自清洁阀夹层下",
+    "OUT24 自清洁阀马桶",
+    "OUT25 沐浴液阀1",
+    "OUT26 沐浴液阀2",
+    "OUT27 沐浴液阀3",
+    "OUT28 沐浴液阀4",
+    "OUT29 清洁液阀",
+    "OUT30 消毒液阀",
+    "OUT31 增压泵GPIO启停",
+    "OUT32 备用1",
+    "OUT33 备用2",
+    "OUT34 备用3",
+    "OUT35 备用4",
+    "OUT36 备用5",
+    "OUT37 备用6",
+    "OUT38 备用7",
+    "OUT39 备用8",
+    "MAGLOCK1 EN 上门电磁锁",
+    "MAGLOCK2 EN 下门电磁锁",
+    "MAGLOCK3 EN 左电插锁",
+    "MAGLOCK4 EN 右电插锁",
+    "MAGLOCK5 EN 后电插锁1",
+    "MAGLOCK6 EN 后电插锁2",
 ]
 
 STAGES = ["0 入舱准备", "1 入舱", "2 洗前准备", "3 冲洗", "4 沐浴", "5 清洗", "6 吹干", "7 出舱准备", "8 出舱"]
-RS485_STATIONS = ["1 增压泵压力/启停", "2 比例阀角度", "10 左风机", "11 右风机", "12 底部风机", "13 顶部排风扇", "14 左加热器", "15 右加热器", "16 底部加热器"]
+RS485_STATIONS = ["1 增压泵压力/启停（485模式）", "2 比例阀角度", "12 底部风机", "13 顶部风机", "16 底部加热器"]
 
 # 协议 13.3：A4 primary_fault_code 具体故障码
 FAULT_CODES = {
@@ -94,6 +147,7 @@ FAULT_CODES = {
     0x0203: "上舱门锁定检查失败",
     0x0204: "下舱门锁定检查失败",
     0x0205: "舱门未关闭到位",
+    0x0206: "上门开到位超时",
     0x0301: "水箱温度传感器数据无效",
     0x0302: "管路出水温度传感器数据无效",
     0x0303: "管路出水温度未达到配方范围",
@@ -113,6 +167,7 @@ FAULT_CODES = {
     0x0504: "增压泵压力设置失败",
     0x0505: "喷淋阀输出失败",
     0x0506: "比例阀输出失败",
+    0x0507: "清洁液低液位",
     0x0601: "风机输出失败",
     0x0602: "加热棒输出失败",
     0x0603: "烘干阶段舱内温度数据无效",
@@ -129,6 +184,7 @@ FAULT_CODES = {
     0x0807: "底部加热棒485通信失败",
     0x0808: "增压泵485通信失败",
     0x0809: "比例调节阀485通信失败",
+    0x080A: "四路风机PWM模块通信或配置异常",
     0x0901: "自检安全条件不允许",
     0x0902: "自检压力超过安全阈值",
     0x0903: "自检舱温超过安全阈值",
@@ -174,9 +230,9 @@ RECIPE_FIELDS = [
     {"key": "cleanSec", "label": "清洗总时间 (秒)", "offset": 40, "kind": "ms", "min": 0, "max": 86400},
     {"key": "drySec", "label": "烘干时间 (秒)", "offset": 44, "kind": "ms", "min": 0, "max": 86400},
     {"key": "selfTopSec", "label": "自清洁顶部 (秒)", "offset": 48, "kind": "ms", "min": 0, "max": 86400},
-    {"key": "selfLeftUpperSec", "label": "自清洁左侧上层 (秒)", "offset": 52, "kind": "ms", "min": 0, "max": 86400},
-    {"key": "selfLeftMiddleSec", "label": "自清洁左侧夹层 (秒)", "offset": 56, "kind": "ms", "min": 0, "max": 86400},
-    {"key": "selfRearSec", "label": "自清洁后端 (秒)", "offset": 60, "kind": "ms", "min": 0, "max": 86400},
+    {"key": "selfLeftUpperSec", "label": "自清洁夹层下 (秒)", "offset": 52, "kind": "ms", "min": 0, "max": 86400},
+    {"key": "selfLeftMiddleSec", "label": "自清洁马桶A (秒)", "offset": 56, "kind": "ms", "min": 0, "max": 86400},
+    {"key": "selfRearSec", "label": "自清洁马桶B (秒)", "offset": 60, "kind": "ms", "min": 0, "max": 86400},
     {"key": "selfDrySec", "label": "自清洁烘干 (秒)", "offset": 64, "kind": "ms", "min": 0, "max": 86400},
     {"key": "selfLiquidPressure", "label": "自清洁药液压力 (kg)", "offset": 68, "kind": "u8x10", "min": 0, "max": 10},
     {"key": "selfRinsePressure", "label": "自清洁冲洗压力 (kg)", "offset": 69, "kind": "u8x10", "min": 0, "max": 10},
@@ -283,6 +339,10 @@ class WorkbenchState:
         self.status = {"connected": False, "port": "", "metrics": {}, "telemetry": {}, "power": {}, "process_time": {}, "flags": "--", "io": {"inputs": [], "outputs": []}, "ioSummary": "未收到 IO 状态", "paramRevision": 0, "actuator_mode": 1, "self_test": None, "last_nack": None}
         self.status["fault"] = empty_fault_state()
         self.parameters = {}
+        self.hardware = {}
+        self.hardware_session = 0
+        self._hardware_waiters = {}
+        self._hardware_operation = threading.Lock()
         self.pending_interaction = None
         self.samples = []
         self.test_running = False
@@ -316,6 +376,8 @@ class WorkbenchState:
                 "io": {"inputs": list(self.status["io"]["inputs"]), "outputs": list(self.status["io"]["outputs"])},
                 "ioSummary": self.status.get("ioSummary", "未收到 IO 状态"),
                 "parameters": dict(self.parameters),
+                "hardware": dict(self.hardware),
+                "hardwareSession": self.hardware_session,
                 "paramRevision": self.status["paramRevision"],
                 "pendingInteraction": self.pending_interaction,
                 "fault": dict(self.status["fault"]),
@@ -352,6 +414,11 @@ class WorkbenchState:
             ser = self.serial
             self.serial = None
             self.status["connected"] = False
+            self.hardware = {}
+            self.hardware_session += 1
+            for waiter in self._hardware_waiters.values():
+                waiter["error"] = "串口已断开，配置结果未确认"
+                waiter["event"].set()
             # 设备端执行器模式默认 RS485，断开后勾选框复位为该值。
             self.status["actuator_mode"] = 1
         if ser:
@@ -408,6 +475,19 @@ class WorkbenchState:
                 time.sleep(0.2)
 
     def process_frame(self, command, sequence, payload):
+        if command == 0xA2 and payload[:1] == b"\x03":
+            try:
+                self.update_hardware(payload)
+                self._resolve_hardware_reply(CMD_GET_PARAM, sequence, payload)
+            except ValueError as exc:
+                self.add_log(str(exc))
+                self._resolve_hardware_reply(CMD_GET_PARAM, sequence, None, str(exc))
+            return
+        if command == 0xF0 and len(payload) >= 6:
+            self._resolve_hardware_reply(payload[0], sequence, payload)
+        elif command == 0xF1 and len(payload) >= 2:
+            reason = ERROR_NAMES.get(payload[1], f"错误0x{payload[1]:02X}")
+            self._resolve_hardware_reply(payload[0], sequence, None, f"设备拒绝配置：{reason}")
         if command == 0xA1:
             self.update_status(payload)
         elif command == 0xA2:
@@ -491,6 +571,8 @@ class WorkbenchState:
             "步骤状态": map_name(step_states, p[6]),
             "配方": f"配方{p[7] + 1}",
             "进度": f"{u16(p, 8) / 10.0:.1f}%",
+            "work_mode": p[0],
+            "device_state": p[1],
         }
         with self.lock:
             self.status["metrics"] = metrics
@@ -542,7 +624,7 @@ class WorkbenchState:
             if len(p) >= 32:
                 power["顶部排风扇"] = [p[31], "%"]
             if len(p) >= 33:
-                power["增压泵压力"] = [p[32] / 10.0, "kg"]
+                power["增压泵压力"] = [p[32] / 10.0 if valid(0x0008) else None, "bar"]
         sample = {
             "time": time.strftime("%H:%M:%S"),
             "seconds": time.time() - self.test_started_at if self.test_started_at else 0,
@@ -588,9 +670,9 @@ class WorkbenchState:
 
     # 协议 19.2：0xA7 SELF_TEST_RESULT，14字节
     SELF_TEST_ITEMS = [
-        "左风机", "右风机", "底部风机", "左加热管", "右加热管", "底部加热管",
-        "增压泵", "比例阀+进水", "淋浴阀上", "淋浴阀中", "淋浴阀下", "淋浴阀后",
-        "自清洁顶阀", "自清洁前上阀", "自清洁前下阀", "自清洁后阀", "旁通阀", "热水链路",
+        "已取消", "已取消", "底部风机", "已取消", "已取消", "底部加热管",
+        "增压泵", "比例阀+进水", "淋浴阀上", "淋浴阀中", "已取消", "已取消",
+        "自清洁上阀", "自清洁夹层下阀", "自清洁马桶阀", "已取消", "旁通阀", "热水链路",
     ]
 
     def update_self_test(self, p, sequence):
@@ -745,14 +827,129 @@ class WorkbenchState:
         if not ok:
             raise RuntimeError(f"切换模式被拒绝：{reason}")
 
+
+    @staticmethod
+    def validate_hardware(values):
+        limits = {"fan_pwm": 1, "temperature_mask": 15,
+                  "lower_door_bypass": 1, "host_command_bypass": 1}
+        if "booster_mode" in values:
+            if type(values["booster_mode"]) not in (int, bool) or values["booster_mode"] not in (0, 1):
+                raise ValueError("增压泵模式无效")
+        if set(values) - {"booster_mode"} != set(limits):
+            raise ValueError("工程配置字段不完整，请先读取")
+        for key, maximum in limits.items():
+            if type(values[key]) not in (int, bool) or not 0 <= values[key] <= maximum:
+                raise ValueError(f"工程配置值无效: {key}")
+        return bytes(int(values[key]) for key in limits)
+
+    def build_hardware_payload(self, values, revision):
+        data = self.validate_hardware(values)
+        return struct.pack("<BBHIH", 3, 0, 1, revision, 4) + data
+
+    def update_hardware(self, payload):
+        if payload[:2] == b"\x03\x01":
+            if (len(payload) != 11 or u16(payload, 2) != 1 or
+                    u16(payload, 8) != 1 or payload[10] > 1):
+                raise ValueError("增压泵配置响应格式不匹配")
+            with self.lock:
+                self.hardware["booster_mode"] = payload[10]
+                self.hardware["revision"] = u32(payload, 4)
+                self.status["paramRevision"] = u32(payload, 4)
+            return
+        if (len(payload) != 18 or payload[:2] != b"\x03\x00" or
+                u16(payload, 2) != 1 or u16(payload, 8) != 8 or
+                payload[14] > 1 or payload[15] > 1 or payload[16:18] != b"\x00\x00"):
+            raise ValueError("工程配置响应格式不匹配")
+        keys = ("fan_pwm", "temperature_mask", "lower_door_bypass", "host_command_bypass")
+        values = dict(zip(keys, payload[10:14]))
+        self.validate_hardware(values)
+        with self.lock:
+            values["booster_mode"] = self.hardware.get("booster_mode", 0)
+            self.hardware = dict(values, busy=bool(payload[14]),
+                                 save_pending=bool(payload[15]), revision=u32(payload, 4))
+            self.status["paramRevision"] = u32(payload, 4)
+
+    def _resolve_hardware_reply(self, request, sequence, result, error=None):
+        with self.lock:
+            waiter = self._hardware_waiters.get((request, sequence))
+            if waiter is not None:
+                waiter["result"] = result
+                waiter["error"] = error
+                waiter["event"].set()
+
+    def _hardware_exchange(self, command, payload, timeout=15.0):
+        seq = self.next_seq()
+        waiter = {"event": threading.Event(), "result": None, "error": None}
+        with self.lock:
+            self._hardware_waiters[(command, seq)] = waiter
+        try:
+            self.send(command, payload, sequence=seq)
+            if not waiter["event"].wait(timeout):
+                raise RuntimeError("工程配置响应超时，结果未确认，请重新读取")
+            if waiter["error"]:
+                raise RuntimeError(waiter["error"])
+            return waiter["result"]
+        finally:
+            with self.lock:
+                self._hardware_waiters.pop((command, seq), None)
+
+    def read_hardware(self):
+        self._hardware_exchange(CMD_GET_PARAM, b"\x03\x00", timeout=3.0)
+        self._hardware_exchange(CMD_GET_PARAM, b"\x03\x01", timeout=3.0)
+        with self.lock:
+            return dict(self.hardware)
+
+    def apply_hardware(self, values):
+        self.validate_hardware(values)
+        if not self._hardware_operation.acquire(blocking=False):
+            raise RuntimeError("工程配置操作正在进行")
+        try:
+            current = self.read_hardware()
+            if current["busy"]:
+                raise RuntimeError("设备正在切换工程配置")
+            ack = self._hardware_exchange(
+                CMD_SET_PARAM, self.build_hardware_payload(values, current["revision"]))
+            revision = u32(ack, 2)
+            if values.get("booster_mode", current["booster_mode"]) != current["booster_mode"]:
+                ack = self._hardware_exchange(
+                    CMD_SET_PARAM, struct.pack("<BBHIHB", 3, 1, 1, revision, 1,
+                                               values["booster_mode"]))
+                revision = u32(ack, 2)
+            applied = self.read_hardware()
+            if any(applied.get(key) != value for key, value in values.items()):
+                raise RuntimeError("设备回读与请求不一致，未确认生效")
+            if applied["revision"] != revision:
+                raise RuntimeError("配置版本已变化，请重新读取")
+            try:
+                self._hardware_exchange(CMD_SAVE_PARAM, struct.pack("<I", revision))
+                saved = self.read_hardware()
+                if saved["save_pending"] or any(saved.get(k) != v for k, v in values.items()):
+                    raise RuntimeError("Flash保存状态未确认")
+            except Exception as exc:
+                raise RuntimeError(f"配置已生效，但保存未确认：{exc}") from exc
+            self.add_log("工程配置已生效并保存Flash")
+            return saved
+        finally:
+            self._hardware_operation.release()
+
     def build_param_payload(self, recipe_index, revision, values):
-        dose = float(values.get("bathLiquidSec", -1))
+        with self.lock:
+            merged = dict(self.parameters)
+        merged.update(values)
+        missing = [field["key"] for field in RECIPE_FIELDS if field["key"] not in merged]
+        if missing:
+            raise ValueError("请先读取当前配方，再修改并写入RAM")
+        try:
+            dose = float(merged["bathLiquidSec"])
+            cycles = float(merged["bathCycles"])
+            bath_on = float(merged["bathOnSec"])
+        except (TypeError, ValueError) as exc:
+            raise ValueError("配方参数包含非数字内容，请检查输入") from exc
         if not 0 <= dose <= 60:
-            raise ValueError("请先读取新版配方，沐浴加液时间必须为0到60秒")
-        cycles = float(values.get("bathCycles", -1))
+            raise ValueError("沐浴加液时间必须为0到60秒")
         if not cycles.is_integer() or not 0 <= cycles <= 100:
-            raise ValueError("请先读取新版配方，沐浴循环次数必须为0到100的整数")
-        if cycles and float(values.get("bathOnSec", 0)) <= 0:
+            raise ValueError("沐浴循环次数必须为0到100的整数")
+        if cycles and bath_on <= 0:
             raise ValueError("启用沐浴循环时，沐浴出水时间必须大于0")
         p = bytearray(10 + RECIPE_PAYLOAD_LENGTH)
         p[0] = 1
@@ -761,7 +958,7 @@ class WorkbenchState:
         put_u32(p, 4, revision)
         put_u16(p, 8, RECIPE_PAYLOAD_LENGTH)
         for field in RECIPE_FIELDS:
-            raw = float(values.get(field["key"], 0))
+            raw = float(merged[field["key"]])
             raw = max(field["min"], min(field["max"], raw))
             offset = 10 + field["offset"]
             kind = field["kind"]

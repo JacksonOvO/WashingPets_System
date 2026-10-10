@@ -107,6 +107,9 @@ static uint16_t payload_length;
 static uint16_t receive_index;
 static osMutexId_t tx_mutex;
 static uint8_t business_tx_sequence;
+static uint8_t hardware_config_sequence;
+static uint8_t hardware_config_index;
+static uint8_t hardware_config_reply_pending;
 static uint32_t last_reported_fault_bitmap;
 static uint32_t health_bitmap_snapshot;
 static uint8_t fault_event_pending;      /* 0无 1仅位图变化 2有新故障（待聚合发送） */
@@ -704,6 +707,20 @@ static void send_param_block_response(uint8_t sequence, uint8_t group, uint8_t i
     memcpy(&payload_out[10], &param->self_test, sizeof(AppSelfTestConfig_t));
     data_length = (uint16_t)sizeof(AppSelfTestConfig_t);
   }
+  else if ((group == 3U) && (index == 1U))
+  {
+    data_length = 1U;
+    write_u16_le(&payload_out[8], data_length);
+    payload_out[10] = AppParam_BoosterPumpUsesRs485();
+  }
+  else if ((group == 3U) && (index == 0U))
+  {
+    data_length = 8U;
+    write_u16_le(&payload_out[8], data_length);
+    memcpy(&payload_out[10], AppParam_GetHardwareConfig(), 4U);
+    payload_out[14] = TaskComm485_HardwareConfigBusy();
+    payload_out[15] = AppParam_IsSavePending();
+  }
   else
   {
     return;
@@ -720,6 +737,8 @@ static void send_telemetry(uint8_t sequence)
   TaskComm485EnvironmentData env = {0};
   AutoSensorData sensors = {0};
   uint16_t valid_flags = 0U;
+  uint8_t pump_pressure = 0U;
+  if (TaskComm485_GetBoosterPumpFeedback(&pump_pressure)) valid_flags |= 0x0008U;
 
   memset(payload_out, 0, sizeof(payload_out));
   if (TaskComm485_GetEnvironmentData(&env) != 0U)
@@ -758,15 +777,15 @@ static void send_telemetry(uint8_t sequence)
   if (env.ozone_valid != 0U) valid_flags |= 0x0400U;
   write_u16_le(&payload_out[6], 0U);
   write_u16_le(&payload_out[22], valid_flags);
-  payload_out[24] = TaskComm485_GetLastPercent(RS485_STATION_LEFT_FAN);
-  payload_out[25] = TaskComm485_GetLastPercent(RS485_STATION_RIGHT_FAN);
+  payload_out[24] = 0U;
+  payload_out[25] = 0U;
   payload_out[26] = TaskComm485_GetLastPercent(RS485_STATION_BOTTOM_FAN);
-  payload_out[27] = TaskComm485_GetLastPercent(RS485_STATION_LEFT_HEATER);
-  payload_out[28] = TaskComm485_GetLastPercent(RS485_STATION_RIGHT_HEATER);
+  payload_out[27] = 0U;
+  payload_out[28] = 0U;
   payload_out[29] = TaskComm485_GetLastPercent(RS485_STATION_BOTTOM_HEATER);
   payload_out[30] = TaskComm485_GetLastProportionalValveAngle();
   payload_out[31] = TaskComm485_GetLastPercent(RS485_STATION_TOP_EXHAUST_FAN);
-  payload_out[32] = 0U;
+  payload_out[32] = pump_pressure;
   /* 尾部追加流程时间统计：总剩余时间和当前小流程剩余时间，单位毫秒，uint32 小端。 */
   write_u32_le(&payload_out[33], AutoProcess_GetRemainingTimeMs());
   write_u32_le(&payload_out[37], AutoProcess_GetCurrentStageRemainingTimeMs());
@@ -820,7 +839,7 @@ static void build_io_status_payload(uint8_t payload_out[APP_IO_PAYLOAD_SIZE])
   payload_out[0] = (uint8_t)AUTO_INPUT_COUNT;
   payload_out[1] = (uint8_t)APP_OUTPUT_POINT_COUNT;
 
-  for (input = AUTO_INPUT_DISINFECTANT_LOW; input < AUTO_INPUT_COUNT; ++input)
+  for (input = AUTO_INPUT_FIRST; input < AUTO_INPUT_COUNT; ++input)
   {
     if (AutoDevice_ReadInput(input) != 0U)
     {
@@ -831,7 +850,7 @@ static void build_io_status_payload(uint8_t payload_out[APP_IO_PAYLOAD_SIZE])
   }
 
   index = 0U;
-  for (output = AUTO_OUTPUT_EXHAUST_FAN; output < AUTO_OUTPUT_COUNT; ++output)
+  for (output = AUTO_OUTPUT_FIRST; output < AUTO_OUTPUT_COUNT; ++output)
   {
     if (TaskOutput_GetActual(output) != 0U)
     {
@@ -930,6 +949,10 @@ static void send_fault_event(uint8_t sequence, AutoReport report)
   {
     severity = 4U;
     extra_bits |= (1UL << 0);
+  }
+  else if (primary_fault == (uint16_t)AUTO_FAULT_UPPER_DOOR_OPEN_TIMEOUT)
+  {
+    severity = 3U;
   }
   else if (report == AUTO_REPORT_TIMEOUT_FAULT)
   {
@@ -1580,7 +1603,7 @@ static void handle_manual_output(uint8_t sequence, const uint8_t *data, uint16_t
 
   output_id = read_u16_le(&data[0]);
   action = data[2];
-  if ((output_id < (uint16_t)AUTO_OUTPUT_EXHAUST_FAN) ||
+  if ((output_id < (uint16_t)AUTO_OUTPUT_FIRST) ||
       (output_id >= (uint16_t)AUTO_OUTPUT_COUNT))
   {
     send_nack(APP_BUSINESS_CMD_MANUAL_OUTPUT, sequence, IAP_ERR_CONFIG, sequence, 0U);
@@ -1600,6 +1623,12 @@ static void handle_manual_output(uint8_t sequence, const uint8_t *data, uint16_t
     return;
   }
 
+  if (output_id == AUTO_OUTPUT_BOOSTER_PUMP_RUN && action &&
+      AppParam_BoosterPumpUsesRs485())
+  {
+    send_nack(APP_BUSINESS_CMD_MANUAL_OUTPUT, sequence, IAP_ERR_BAD_STATE, sequence, output_id);
+    return;
+  }
   if (TaskOutput_Request(APP_OUTPUT_SOURCE_MANUAL,
                          (AutoOutputPoint)output_id,
                          action) != HAL_OK)
@@ -1643,8 +1672,9 @@ static void handle_manual_rs485(uint8_t sequence,
   station = read_u16_le(&data[0]);
   value = read_u16_le(&data[2]);
 
-  if ((station >= RS485_STATION_LEFT_FAN) &&
-      (station <= RS485_STATION_BOTTOM_HEATER))
+  if ((station == RS485_STATION_BOTTOM_FAN) ||
+      (station == RS485_STATION_TOP_EXHAUST_FAN) ||
+      (station == RS485_STATION_BOTTOM_HEATER))
   {
     if (value > 100U)
     {
@@ -1661,6 +1691,19 @@ static void handle_manual_rs485(uint8_t sequence,
     }
     status = TaskComm485_RequestSetPercent((uint8_t)station,
                                            (uint8_t)value);
+  }
+  else if (station == RS485_STATION_BOOSTER_PUMP)
+  {
+    if (value > 100U || !AppParam_BoosterPumpUsesRs485())
+    {
+      send_nack(APP_BUSINESS_CMD_MANUAL_RS485, sequence,
+                IAP_ERR_CONFIG, sequence, station);
+      return;
+    }
+    TaskComm485_ReleaseNonzero(COMM485_INHIBIT_STARTUP |
+                               COMM485_INHIBIT_SAFE_STOP |
+                               COMM485_INHIBIT_MODE_CHANGE);
+    status = TaskComm485_RequestSetBoosterPumpPercent((uint8_t)value);
   }
   else if (station == RS485_STATION_PROPORTIONAL_VALVE)
   {
@@ -1706,17 +1749,13 @@ static void handle_set_actuator_mode(uint8_t sequence,
   }
 
   mode = read_u16_le(&data[0]);
-  if (mode > 1U)
+  if (mode != 1U)
   {
     send_nack(APP_BUSINESS_CMD_SET_ACTUATOR_MODE, sequence,
               IAP_ERR_CONFIG, sequence, mode);
     return;
   }
 
-  if (mode == 0U)
-  {
-    (void)TaskComm485_RequestSetPercent(RS485_STATION_TOP_EXHAUST_FAN, 0U);
-  }
   TaskComm485_SetRs485ActuatorMode((uint8_t)mode);
   send_ack(APP_BUSINESS_CMD_SET_ACTUATOR_MODE,
            sequence,
@@ -1754,15 +1793,20 @@ static void handle_booster_control(uint8_t sequence,
     return;
   }
 
+  if (enabled)
+    TaskComm485_ReleaseNonzero(COMM485_INHIBIT_STARTUP | COMM485_INHIBIT_SAFE_STOP | COMM485_INHIBIT_MODE_CHANGE);
   if (TaskOutput_IsAutoMode() != 0U)
   {
     status = AutoDevice_SetBoosterPumpRunning((uint8_t)enabled);
   }
   else
   {
-    status = TaskOutput_Request(APP_OUTPUT_SOURCE_MANUAL,
-                                AUTO_OUTPUT_BOOSTER_PUMP_RUN,
-                                (uint8_t)enabled);
+    if (AppParam_BoosterPumpUsesRs485())
+      status = TaskComm485_RequestSetBoosterPumpRunning((uint8_t)enabled);
+    else
+      status = TaskOutput_Request(APP_OUTPUT_SOURCE_MANUAL,
+                                  AUTO_OUTPUT_BOOSTER_PUMP_RUN,
+                                  (uint8_t)enabled);
     if (status == HAL_OK)
     {
       (void)TaskComm485_RequestSetBoosterPumpRunning((uint8_t)enabled);
@@ -1879,6 +1923,37 @@ static void handle_set_param_block(uint8_t sequence, const uint8_t *data, uint16
     return;
   }
 
+  if ((group == 3U) && (index == 1U) && (data_length == 1U))
+  {
+    HAL_StatusTypeDef status = TaskComm485_RequestBoosterPumpMode(data[10]);
+    if (status != HAL_OK)
+      send_nack(APP_BUSINESS_CMD_SET_PARAM_BLOCK, sequence,
+                status == HAL_BUSY ? IAP_ERR_BUSY : IAP_ERR_CONFIG, sequence, 3U);
+    else
+    {
+      hardware_config_sequence = sequence;
+      hardware_config_index = 1U;
+      hardware_config_reply_pending = 1U;
+    }
+    return;
+  }
+  if ((group == 3U) && (index == 0U) && (data_length == sizeof(AppHardwareConfig_t)))
+  {
+    AppHardwareConfig_t config;
+    HAL_StatusTypeDef status;
+    memcpy(&config, &data[10], sizeof(config));
+    status = TaskComm485_RequestHardwareConfig(&config);
+    if (status != HAL_OK)
+      send_nack(APP_BUSINESS_CMD_SET_PARAM_BLOCK, sequence,
+                status == HAL_BUSY ? IAP_ERR_BUSY : IAP_ERR_CONFIG, sequence, 3U);
+    else
+    {
+      hardware_config_sequence = sequence;
+      hardware_config_index = 0U;
+      hardware_config_reply_pending = 1U;
+    }
+    return;
+  }
   send_nack(APP_BUSINESS_CMD_SET_PARAM_BLOCK, sequence, IAP_ERR_CONFIG, sequence, 0U);
 }
 
@@ -1941,6 +2016,13 @@ static void handle_restore_defaults(uint8_t sequence, const uint8_t *data, uint1
 
 static void process_business_packet(uint8_t command, uint8_t sequence)
 {
+  if (TaskComm485_HardwareConfigBusy() &&
+      command != APP_BUSINESS_CMD_QUERY_STATUS && command != APP_BUSINESS_CMD_QUERY_IO_STATUS &&
+      command != APP_BUSINESS_CMD_GET_PARAM_BLOCK)
+  {
+    send_nack(command, sequence, IAP_ERR_BUSY, sequence, 3U);
+    return;
+  }
   switch (command)
   {
     case APP_BUSINESS_CMD_QUERY_STATUS:
@@ -2182,6 +2264,19 @@ void AppIap_Service(void)
 {
   uint32_t now = HAL_GetTick();
   SelfTestResult self_test_result;
+  HAL_StatusTypeDef config_result;
+
+  if (hardware_config_reply_pending && TaskComm485_TakeHardwareConfigResult(&config_result))
+  {
+    hardware_config_reply_pending = 0U;
+    if (config_result == HAL_OK)
+      send_ack(APP_BUSINESS_CMD_SET_PARAM_BLOCK, hardware_config_sequence, AppParam_GetRevision());
+    else
+      send_nack(APP_BUSINESS_CMD_SET_PARAM_BLOCK, hardware_config_sequence,
+                config_result == HAL_BUSY ? IAP_ERR_BUSY : IAP_ERR_CONFIG,
+                hardware_config_sequence, 3U);
+    send_param_block_response(hardware_config_sequence, 3U, hardware_config_index);
+  }
 
   if ((TaskSelfTest_GetPendingResult(&self_test_result) != 0U) &&
       ((self_test_result_tick == 0U) ||

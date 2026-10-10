@@ -3,26 +3,46 @@
 #include "app_param.h"
 #include "auto_device.h"
 #include "task_output.h"
+#include "cmsis_os.h"
 
 typedef enum { BATH_OFF, BATH_FEED, BATH_WATER } BathOutputPhase;
+static AutoOutputPoint selected_liquid_valve(void)
+{
+  return (AutoOutputPoint)(AUTO_OUTPUT_BATH_LIQUID_VALVE +
+                           AutoDevice_GetBathLiquidSelection());
+}
+
 static BathOutputPhase output_phase;
 static uint32_t phase_tick;
 static uint32_t completed_cycles;
 
+static HAL_StatusTypeDef wait_booster(uint8_t enabled)
+{
+  if (!AppParam_BoosterPumpUsesRs485()) return HAL_OK;
+  uint32_t started = HAL_GetTick();
+  while (AutoDevice_IsBoosterPumpRunning() != enabled)
+  {
+    if (AutoDevice_IsEmergencyStopped() || AutoDevice_IsPaused() ||
+        HAL_GetTick() - started >= 1500U) return HAL_ERROR;
+    osDelay(10U);
+  }
+  return HAL_OK;
+}
+
 /* Flush the output queue before timing a phase or enabling the other pump. */
 static HAL_StatusTypeDef apply_phase(BathOutputPhase phase)
 {
-  if ((AutoDevice_SetOutput(AUTO_OUTPUT_SCREW_PUMP, 0U) != HAL_OK) ||
-      (AutoDevice_SetOutput(AUTO_OUTPUT_DISINFECTANT_VALVE, 0U) != HAL_OK) ||
+  if ((AutoDevice_SetOutput(AUTO_OUTPUT_BATH_PUMP, 0U) != HAL_OK) ||
+      (AutoDevice_SetOutput(selected_liquid_valve(), 0U) != HAL_OK) ||
       (AutoDevice_SetBoosterPumpRunning(0U) != HAL_OK) ||
-      (TaskOutput_Sync(200U) != HAL_OK))
+      (TaskOutput_Sync(200U) != HAL_OK) || (wait_booster(0U) != HAL_OK))
   {
     return HAL_ERROR;
   }
   if (phase == BATH_FEED)
   {
-    if ((AutoDevice_SetOutput(AUTO_OUTPUT_DISINFECTANT_VALVE, 1U) != HAL_OK) ||
-        (AutoDevice_SetOutput(AUTO_OUTPUT_SCREW_PUMP, 1U) != HAL_OK))
+    if ((AutoDevice_SetOutput(selected_liquid_valve(), 1U) != HAL_OK) ||
+        (AutoDevice_SetOutput(AUTO_OUTPUT_BATH_PUMP, 1U) != HAL_OK))
     {
       return HAL_ERROR;
     }
@@ -35,10 +55,11 @@ static HAL_StatusTypeDef apply_phase(BathOutputPhase phase)
       return HAL_ERROR;
     }
   }
+  if (wait_booster(phase == BATH_WATER) != HAL_OK) return HAL_ERROR;
   if ((TaskOutput_Sync(200U) != HAL_OK) ||
-      (TaskOutput_GetActual(AUTO_OUTPUT_SCREW_PUMP) != (phase == BATH_FEED)) ||
-      (TaskOutput_GetActual(AUTO_OUTPUT_DISINFECTANT_VALVE) != (phase == BATH_FEED)) ||
-      (TaskOutput_GetActual(AUTO_OUTPUT_BOOSTER_PUMP_RUN) != (phase == BATH_WATER)))
+      (TaskOutput_GetActual(AUTO_OUTPUT_BATH_PUMP) != (phase == BATH_FEED)) ||
+      (TaskOutput_GetActual(selected_liquid_valve()) != (phase == BATH_FEED)) ||
+      (AutoDevice_IsBoosterPumpRunning() != (phase == BATH_WATER)))
   {
     return HAL_ERROR;
   }
@@ -101,7 +122,8 @@ static HAL_StatusTypeDef BathResume(uint16_t step_id)
   {
     return HAL_ERROR;
   }
-  AutoDevice_SetAllShowerValves(1U);
+  AutoDevice_SetAllShowerValves(0U);
+  (void)AutoDevice_SetOutput(AUTO_OUTPUT_SHOWER_MIDDLE, 1U);
   /* The process clock excludes pauses; keep the phase, timer and cycle count. */
   if (apply_phase(output_phase) != HAL_OK)
   {
@@ -123,8 +145,8 @@ static AppFlowStepResult CheckLiquid(AppFlowContext *ctx, const AppFlowStep *ste
   (void)ctx;
   (void)step;
   return (AppParam_GetActiveRecipe()->bath_liquid_time_ms == 0U ||
-          AutoDevice_ReadInput(AUTO_INPUT_DISINFECTANT_LOW) == 0U) ?
-         APP_FLOW_STEP_DONE : fail_bath(AUTO_FAULT_DISINFECTANT_LOW);
+          AutoDevice_ReadInput((AutoInputPoint)(AUTO_INPUT_BATH_LIQUID_LOW + AutoDevice_GetBathLiquidSelection())) == 0U) ?
+         APP_FLOW_STEP_DONE : fail_bath(AUTO_FAULT_BATH_LIQUID_LOW);
 }
 
 static AppFlowStepResult WaterPathOn(AppFlowContext *ctx, const AppFlowStep *step)
@@ -138,7 +160,8 @@ static AppFlowStepResult WaterPathOn(AppFlowContext *ctx, const AppFlowStep *ste
   {
     return fail_bath(AUTO_FAULT_OUTPUT_COMMAND_FAILED);
   }
-  AutoDevice_SetAllShowerValves(1U);
+  AutoDevice_SetAllShowerValves(0U);
+  (void)AutoDevice_SetOutput(AUTO_OUTPUT_SHOWER_MIDDLE, 1U);
   return apply_phase(BATH_OFF) == HAL_OK ? APP_FLOW_STEP_DONE :
          fail_bath(AUTO_FAULT_OUTPUT_COMMAND_FAILED);
 }
@@ -248,8 +271,8 @@ static const AppFlowStep steps[] = {
   AUTO_STEP(10, "BATH_CHECK_ALLOW", 0U, 0U, CheckAllow, "检查门、水位和水温，零次跳过"),
   AUTO_STEP(20, "BATH_CHECK_LIQUID", 0U, 0U, CheckLiquid, "检查沐浴液低液位信号"),
   AUTO_STEP(30, "BATH_WATER_PATH_ON", 0U, BATH_WATER_PATH_DELAY_MS, WaterPathOn, "打开淋浴阀，两泵保持关闭"),
-  AUTO_STEP(60, "BATH_LIQUID_PUMP_ON", 0U, 0U, LiquidPumpOn, "每轮打开OUT18和蠕动泵"),
-  AUTO_STEP(70, "BATH_MIX_RUNNING", 0U, 0U, MixRunning, "按配方加液时间关闭蠕动泵和OUT18"),
+  AUTO_STEP(60, "BATH_LIQUID_PUMP_ON", 0U, 0U, LiquidPumpOn, "每轮打开所选药液阀和沐浴蠕动泵"),
+  AUTO_STEP(70, "BATH_MIX_RUNNING", 0U, 0U, MixRunning, "按配方加液时间关闭沐浴蠕动泵和所选药液阀"),
   AUTO_STEP(80, "BATH_SPRAY", 0U, 0U, BathSpray, "增压泵按配方出水时间喷水，完成一轮"),
   AUTO_STEP(85, "BATH_PAUSE", 0U, 0U, BathPause, "暂停后回到投液，末轮不暂停"),
   AUTO_STEP(90, "BATH_LIQUID_PUMP_OFF", 0U, 0U, LiquidOff, "开始末尾清水冲管"),

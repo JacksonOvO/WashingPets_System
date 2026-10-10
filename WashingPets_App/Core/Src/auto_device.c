@@ -15,31 +15,29 @@ typedef struct
   uint16_t pin;
 } AutoGpio;
 
-/*
- * 输入映射表。
- * 消毒液低液位使用PA3。
- * 其余点位严格按照最新输入表。所有输入均为低电平有效并使用内部上拉。
- */
+/* 19路普通IN及2路独立门到位；液位语义由业务层解释，原始采集低电平为1。 */
 static const AutoGpio input_table[AUTO_INPUT_COUNT] = {
-  [AUTO_INPUT_DISINFECTANT_LOW] = {GPIOA, GPIO_PIN_3},
-  [AUTO_INPUT_BATH_LIQUID_LOW] = {GPIOA, GPIO_PIN_4},
-  [AUTO_INPUT_FRAGRANCE_LOW] = {GPIOA, GPIO_PIN_5},
-  [AUTO_INPUT_SOFTENER_LOW] = {GPIOA, GPIO_PIN_6},
-  [AUTO_INPUT_DEODORIZER_LOW] = {GPIOA, GPIO_PIN_7},
-  [AUTO_INPUT_CONDITIONER_LOW] = {GPIOC, GPIO_PIN_4},
-  [AUTO_INPUT_TANK_LOW] = {GPIOC, GPIO_PIN_5},
-  [AUTO_INPUT_TANK_MIDDLE] = {GPIOB, GPIO_PIN_0},
-  [AUTO_INPUT_TANK_HIGH] = {GPIOB, GPIO_PIN_1},
-  [AUTO_INPUT_EMERGENCY_STOP] = {GPIOB, GPIO_PIN_2},
-  [AUTO_INPUT_DRAIN_PIPE_LEVEL] = {GPIOF, GPIO_PIN_12},
-  [AUTO_INPUT_UPPER_LIGHT_CURTAIN] = {GPIOF, GPIO_PIN_13},
-  [AUTO_INPUT_LOWER_LIGHT_CURTAIN] = {GPIOF, GPIO_PIN_14},
-  [AUTO_INPUT_UPPER_DOOR_CLOSED] = {GPIOF, GPIO_PIN_15},
-  [AUTO_INPUT_LOWER_DOOR_CLOSED] = {GPIOG, GPIO_PIN_0},
-  [AUTO_INPUT_LEFT_LOCK_CLOSED] = {GPIOG, GPIO_PIN_1},
-  [AUTO_INPUT_RIGHT_LOCK_CLOSED] = {GPIOE, GPIO_PIN_7},
-  [AUTO_INPUT_REAR_LOCK_1_CLOSED] = {GPIOE, GPIO_PIN_8},
-  [AUTO_INPUT_REAR_LOCK_2_CLOSED] = {GPIOE, GPIO_PIN_9},
+  [AUTO_INPUT_BATH_LIQUID_LOW] = {GPIOA, GPIO_PIN_3},                           /* IN1: 沐浴液1低液位 - PA3 */
+  [AUTO_INPUT_FRAGRANCE_LOW] = {GPIOA, GPIO_PIN_4},                             /* IN2: 沐浴液2低液位 - PA4 */
+  [AUTO_INPUT_SOFTENER_LOW] = {GPIOA, GPIO_PIN_5},                              /* IN3: 沐浴液3低液位 - PA5 */
+  [AUTO_INPUT_DEODORIZER_LOW] = {GPIOA, GPIO_PIN_6},                            /* IN4: 沐浴液4低液位 - PA6 */
+  [AUTO_INPUT_CLEAN_LIQUID_LOW] = {GPIOA, GPIO_PIN_7},                          /* IN5: 清洁液低液位 - PA7 */
+  [AUTO_INPUT_DISINFECTANT_LOW] = {GPIOC, GPIO_PIN_4},                          /* IN6: 消毒液低液位 - PC4 */
+  [AUTO_INPUT_TANK_LOW] = {GPIOC, GPIO_PIN_5},                                  /* IN7: 水箱低液位 - PC5 */
+  [AUTO_INPUT_TANK_MIDDLE] = {GPIOB, GPIO_PIN_0},                               /* IN8: 水箱中液位 - PB0 */
+  [AUTO_INPUT_TANK_HIGH] = {GPIOB, GPIO_PIN_1},                                 /* IN9: 水箱高液位 - PB1 */
+  [AUTO_INPUT_EMERGENCY_STOP] = {GPIOB, GPIO_PIN_2},                            /* IN10: 急停开关 - PB2 */
+  [AUTO_INPUT_UPPER_DOOR_OPEN] = {GPIOF, GPIO_PIN_11},                          /* IN11: 上门开门到位 - PF11 */
+  [AUTO_INPUT_SPARE_1] = {GPIOF, GPIO_PIN_12},                                  /* IN12: 备用1 - PF12 */
+  [AUTO_INPUT_SPARE_2] = {GPIOF, GPIO_PIN_13},                                  /* IN13: 备用2 - PF13 */
+  [AUTO_INPUT_SPARE_3] = {GPIOF, GPIO_PIN_14},                                  /* IN14: 备用3 - PF14 */
+  [AUTO_INPUT_SPARE_4] = {GPIOE, GPIO_PIN_10},                                  /* IN15: 备用4 - PE10 */
+  [AUTO_INPUT_SPARE_5] = {GPIOE, GPIO_PIN_11},                                  /* IN16: 备用5 - PE11 */
+  [AUTO_INPUT_SPARE_6] = {GPIOE, GPIO_PIN_12},                                  /* IN17: 备用6 - PE12 */
+  [AUTO_INPUT_SPARE_7] = {GPIOE, GPIO_PIN_13},                                  /* IN18: 备用7 - PE13 */
+  [AUTO_INPUT_SPARE_8] = {GPIOE, GPIO_PIN_14},                                  /* IN19: 备用8 - PE14 */
+  [AUTO_INPUT_UPPER_DOOR_CLOSED] = {GPIOF, GPIO_PIN_15},                        /* 独立上门关门到位 (bit19) - PF15 */
+  [AUTO_INPUT_LOWER_DOOR_CLOSED] = {GPIOG, GPIO_PIN_0},                         /* 独立下门关门到位 (bit20) - PG0 */
 };
 
 static AutoSensorData sensor_data;
@@ -61,16 +59,16 @@ static uint8_t dry_run_upper_door_closed;
 static uint8_t dry_run_lower_door_closed;
 #endif
 
-/* 所有储液、蓄水箱和排水管液位信号均要求连续稳定3秒后才更新。 */
+/* 储液和水箱液位信号连续稳定3秒后更新；门信号和备用输入采用30ms滤波。 */
 #if (APP_DRY_RUN_ENABLE == 0U)
 static uint8_t is_level_input(AutoInputPoint point)
 {
-  if ((point >= AUTO_INPUT_DISINFECTANT_LOW) &&
+  if ((point >= AUTO_INPUT_FIRST) &&
       (point <= AUTO_INPUT_TANK_HIGH))
   {
     return 1U;
   }
-  return (point == AUTO_INPUT_DRAIN_PIPE_LEVEL) ? 1U : 0U;
+  return 0U;
 }
 #endif
 
@@ -114,17 +112,14 @@ static uint8_t dry_run_input_value(AutoInputPoint point)
     case AUTO_INPUT_EMERGENCY_STOP:
       return 1U;
 
+    case AUTO_INPUT_UPPER_DOOR_OPEN:
+      return !dry_run_upper_door_closed;
+
     case AUTO_INPUT_UPPER_DOOR_CLOSED:
       return dry_run_upper_door_closed;
 
     case AUTO_INPUT_LOWER_DOOR_CLOSED:
       return dry_run_lower_door_closed;
-
-    case AUTO_INPUT_LEFT_LOCK_CLOSED:
-    case AUTO_INPUT_RIGHT_LOCK_CLOSED:
-    case AUTO_INPUT_REAR_LOCK_1_CLOSED:
-    case AUTO_INPUT_REAR_LOCK_2_CLOSED:
-      return 1U;
 
     default:
       return 0U;
@@ -195,7 +190,7 @@ void AutoDevice_Init(void)
   enable_all_gpio_clocks();
 
   /* 低电平有效输入使用内部上拉，断线或未接入时默认保持“未触发”。 */
-  for (index = 0U; index < AUTO_INPUT_COUNT; ++index)
+  for (index = AUTO_INPUT_FIRST; index < AUTO_INPUT_COUNT; ++index)
   {
     init.Pin = input_table[index].pin;
     init.Mode = GPIO_MODE_INPUT;
@@ -249,7 +244,7 @@ void AutoDevice_ProcessInputs(void)
   AutoInputPoint point;
   uint32_t now = HAL_GetTick();
 
-  for (point = AUTO_INPUT_DISINFECTANT_LOW; point < AUTO_INPUT_COUNT; ++point)
+  for (point = AUTO_INPUT_FIRST; point < AUTO_INPUT_COUNT; ++point)
   {
 #if (APP_DRY_RUN_ENABLE != 0U)
     input_stable[point] = dry_run_input_value(point);
@@ -277,19 +272,11 @@ void AutoDevice_ProcessInputs(void)
 
 uint8_t AutoDevice_ReadInput(AutoInputPoint point)
 {
-#if (AUTO_LIGHT_CURTAIN_SENSOR_BYPASS != 0U)
-  if ((point == AUTO_INPUT_UPPER_LIGHT_CURTAIN) ||
-      (point == AUTO_INPUT_LOWER_LIGHT_CURTAIN))
-  {
-    return 0U;
-  }
-#endif
-#if (AUTO_LOWER_DOOR_SENSOR_BYPASS != 0U)
-  if (point == AUTO_INPUT_LOWER_DOOR_CLOSED)
+  if (AppParam_GetHardwareConfig()->lower_door_bypass &&
+      (point == AUTO_INPUT_LOWER_DOOR_CLOSED))
   {
     return 1U;
   }
-#endif
 #if (APP_DRY_RUN_ENABLE != 0U)
   return (point < AUTO_INPUT_COUNT) ? dry_run_input_value(point) : 0U;
 #else
@@ -315,8 +302,23 @@ void AutoDevice_SetAllShowerValves(uint8_t enabled)
 {
   (void)AutoDevice_SetOutput(AUTO_OUTPUT_SHOWER_UPPER, enabled);
   (void)AutoDevice_SetOutput(AUTO_OUTPUT_SHOWER_MIDDLE, enabled);
-  (void)AutoDevice_SetOutput(AUTO_OUTPUT_SHOWER_LOWER, enabled);
-  (void)AutoDevice_SetOutput(AUTO_OUTPUT_SHOWER_REAR, enabled);
+}
+
+HAL_StatusTypeDef AutoDevice_SetTopFanRunning(uint8_t enabled)
+{
+  return TaskOutput_SetTopFanRunning(enabled);
+}
+
+HAL_StatusTypeDef AutoDevice_SetBlower(uint8_t enabled)
+{
+  return AutoDevice_SetOutput(AUTO_OUTPUT_BLOWER, enabled);
+}
+
+uint8_t AutoDevice_IsBoosterPumpRunning(void)
+{
+  return AppParam_BoosterPumpUsesRs485() ?
+         TaskComm485_GetLastBoosterPumpRunning() :
+         TaskOutput_GetActual(AUTO_OUTPUT_BOOSTER_PUMP_RUN);
 }
 
 HAL_StatusTypeDef AutoDevice_SetBoosterPumpPercent(uint8_t percent)
@@ -333,6 +335,8 @@ HAL_StatusTypeDef AutoDevice_SetBoosterPumpRunning(uint8_t enabled)
   {
     return HAL_BUSY;
   }
+  if (AppParam_BoosterPumpUsesRs485())
+    return TaskComm485_RequestSetBoosterPumpRunning(enabled);
   status = AutoDevice_SetOutput(AUTO_OUTPUT_BOOSTER_PUMP_RUN, enabled);
   if (status == HAL_OK)
   {
@@ -496,6 +500,11 @@ uint8_t AutoDevice_GetFlowTargetPercent(void)
 }
 
 /* 由上位机解析层置位一条流程命令；非法编号直接忽略。 */
+void AutoDevice_ClearHostCommands(void)
+{
+  memset((void *)command_flags, 0, sizeof(command_flags));
+}
+
 void AutoDevice_SetCommand(AutoCommand command)
 {
   if (command < AUTO_COMMAND_COUNT)
@@ -518,16 +527,16 @@ uint8_t AutoDevice_ConsumeCommand(AutoCommand command)
     return 0U;
   }
 
-#if (AUTO_DEVICE_HOST_COMMAND_BYPASS != 0U)
+  if (AppParam_GetHardwareConfig()->host_command_bypass)
+  {
   /* 调试旁路开启：清除可能残留的真实命令，并直接报告命令已收到。 */
   command_flags[command] = 0U;
   return 1U;
-#else
+  }
   uint8_t result;
   result = command_flags[command];
   command_flags[command] = 0U;
   return result;
-#endif
 }
 
 void AutoDevice_SetRecipeSelectedFlag(void)

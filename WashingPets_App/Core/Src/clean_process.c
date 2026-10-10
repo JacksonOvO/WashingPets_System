@@ -51,7 +51,7 @@ static AppFlowStepResult Finish(AppFlowContext *, const AppFlowStep *);
 
 static const AppFlowStep self_clean_steps[] = {
   AUTO_STEP(5,   "SELF_CLEAN_CHECK_TANK_HIGH",   0U, 0U, CheckTankHigh,     "确认水箱高液位"),
-  AUTO_STEP(10,  "SELF_CLEAN_CHECK_ALLOW",       0U, 0U, CheckAllow,        "确认舱门关闭且舱内无目标"),
+  AUTO_STEP(10,  "SELF_CLEAN_CHECK_ALLOW",       0U, 0U, CheckAllow,        "确认舱门关闭，空舱需人工确认"),
   AUTO_STEP(20,  "SELF_CLEAN_CLEAN_LIQUID_ON",   0U, 0U, CleanLiquidSprayOn,"打开清洁液和所有自清洁阀"),
   AUTO_STEP(30,  "SELF_CLEAN_WAIT_CLEAN_LIQUID", 0U, 0U, WaitTimedStep,     "清洁液喷洒"),
   AUTO_STEP(40,  "SELF_CLEAN_CHECK_FLOW",        0U, 0U, CheckFlow,         "确认自清洁水路流量"),
@@ -59,10 +59,10 @@ static const AppFlowStep self_clean_steps[] = {
   AUTO_STEP(50,  "SELF_CLEAN_SOAK",              0U, 0U, WaitTimedStep,     "药液静置"),
   AUTO_STEP(60,  "SELF_CLEAN_TOP_RINSE_ON",      0U, 0U, TopRinseOn,        "第一轮顶部清水冲洗"),
   AUTO_STEP(70,  "SELF_CLEAN_WAIT_TOP_RINSE",    0U, 0U, WaitTimedStep,     "等待第一轮顶部冲洗时间"),
-  AUTO_STEP(80,  "SELF_CLEAN_LEFT_UPPER_ON",     0U, 0U, SwitchLeftUpperRinse, "第一轮左侧上层冲洗"),
-  AUTO_STEP(90,  "SELF_CLEAN_WAIT_LEFT_UPPER",   0U, 0U, WaitTimedStep,     "等待第一轮左侧上层冲洗时间"),
-  AUTO_STEP(100, "SELF_CLEAN_LOWER_REAR_ON",     0U, 0U, SwitchLowerRearRinse, "第一轮左侧下层和后端冲洗"),
-  AUTO_STEP(110, "SELF_CLEAN_WAIT_LOWER_REAR",   0U, 0U, WaitTimedStep,     "等待第一轮左侧下层和后端冲洗时间"),
+  AUTO_STEP(80,  "SELF_CLEAN_LEFT_UPPER_ON",     0U, 0U, SwitchLeftUpperRinse, "第一轮夹层下冲洗"),
+  AUTO_STEP(90,  "SELF_CLEAN_WAIT_LEFT_UPPER",   0U, 0U, WaitTimedStep,     "等待第一轮夹层下冲洗时间"),
+  AUTO_STEP(100, "SELF_CLEAN_LOWER_REAR_ON",     0U, 0U, SwitchLowerRearRinse, "第一轮马桶冲洗"),
+  AUTO_STEP(110, "SELF_CLEAN_WAIT_LOWER_REAR",   0U, 0U, WaitTimedStep,     "等待第一轮马桶冲洗时间"),
   AUTO_STEP(120, "SELF_CLEAN_RINSE_OFF",         0U, 0U, RinsePathOff,      "关闭第一轮冲洗水路"),
   AUTO_STEP(130, "SELF_CLEAN_DISINFECT_ON",      0U, 0U, DisinfectantSprayOn, "打开消毒液和所有自清洁阀"),
   AUTO_STEP(140, "SELF_CLEAN_WAIT_DISINFECT",    0U, 0U, WaitTimedStep,     "消毒液喷洒"),
@@ -70,10 +70,10 @@ static const AppFlowStep self_clean_steps[] = {
   AUTO_STEP(160, "SELF_CLEAN_SOAK_AFTER_DISINF", 0U, 0U, WaitTimedStep,     "消毒液静置"),
   AUTO_STEP(170, "SELF_CLEAN_TOP_RINSE2_ON",     0U, 0U, TopRinseOn,        "第二轮顶部清水冲洗"),
   AUTO_STEP(180, "SELF_CLEAN_WAIT_TOP_RINSE2",   0U, 0U, WaitTimedStep,     "等待第二轮顶部冲洗时间"),
-  AUTO_STEP(190, "SELF_CLEAN_LEFT_UPPER2_ON",    0U, 0U, SwitchLeftUpperRinse, "第二轮左侧上层冲洗"),
-  AUTO_STEP(200, "SELF_CLEAN_WAIT_LEFT_UPPER2",  0U, 0U, WaitTimedStep,     "等待第二轮左侧上层冲洗时间"),
-  AUTO_STEP(210, "SELF_CLEAN_LOWER_REAR2_ON",    0U, 0U, SwitchLowerRearRinse, "第二轮左侧下层和后端冲洗"),
-  AUTO_STEP(220, "SELF_CLEAN_WAIT_LOWER_REAR2",  0U, 0U, WaitTimedStep,     "等待第二轮左侧下层和后端冲洗时间"),
+  AUTO_STEP(190, "SELF_CLEAN_LEFT_UPPER2_ON",    0U, 0U, SwitchLeftUpperRinse, "第二轮夹层下冲洗"),
+  AUTO_STEP(200, "SELF_CLEAN_WAIT_LEFT_UPPER2",  0U, 0U, WaitTimedStep,     "等待第二轮夹层下冲洗时间"),
+  AUTO_STEP(210, "SELF_CLEAN_LOWER_REAR2_ON",    0U, 0U, SwitchLowerRearRinse, "第二轮马桶冲洗"),
+  AUTO_STEP(220, "SELF_CLEAN_WAIT_LOWER_REAR2",  0U, 0U, WaitTimedStep,     "等待第二轮马桶冲洗时间"),
   AUTO_STEP(230, "SELF_CLEAN_RINSE2_OFF",        0U, 0U, RinsePathOff,      "关闭第二轮冲洗水路"),
   AUTO_STEP(235, "SELF_CLEAN_CHECK_EMPTY_AGAIN", 0U, 0U, CheckEmptyAgain,   "消杀前再次确认舱门和舱内状态"),
   AUTO_STEP(240, "SELF_CLEAN_UV_DRY_START",      0U, 0U, UvAndVentLow,      "打开紫外线并开始烘干通风"),
@@ -88,7 +88,7 @@ static const AppFlowStep self_clean_steps[] = {
   AUTO_STEP(320, "SELF_CLEAN_FORBIDDEN",         0U, 0U, FailForbidden,     "自清洁条件不允许"),
   AUTO_STEP(330, "SELF_CLEAN_FLOW_FAULT",        0U, 0U, FailFlow,          "自清洁流量异常"),
   AUTO_STEP(340, "SELF_CLEAN_STOPPED",           0U, 0U, FailStopped,       "停止或急停处理"),
-  AUTO_STEP(350, "SELF_CLEAN_DISINFECT_FORBID",  0U, 0U, FailDisinfection,  "臭氧紫外线启动条件不允许"),
+  AUTO_STEP(350, "SELF_CLEAN_DISINFECT_FORBID",  0U, 0U, FailDisinfection,  "紫外线启动条件不允许"),
   AUTO_STEP(370, "SELF_CLEAN_END",               0U, 0U, Finish,            "自清洁流程结束"),
 };
 
@@ -100,16 +100,6 @@ static AppFlowStepResult jump(AppFlowContext *ctx, uint16_t id)
 
 static HAL_StatusTypeDef set_fans(uint8_t percent)
 {
-  if (TaskComm485_RequestSetPercent(RS485_STATION_LEFT_FAN, percent) != HAL_OK)
-  {
-    AutoDevice_SetFault(AUTO_FAULT_485_LEFT_FAN_COMM);
-    return HAL_ERROR;
-  }
-  if (TaskComm485_RequestSetPercent(RS485_STATION_RIGHT_FAN, percent) != HAL_OK)
-  {
-    AutoDevice_SetFault(AUTO_FAULT_485_RIGHT_FAN_COMM);
-    return HAL_ERROR;
-  }
   if (TaskComm485_RequestSetPercent(RS485_STATION_BOTTOM_FAN, percent) != HAL_OK)
   {
     AutoDevice_SetFault(AUTO_FAULT_485_BOTTOM_FAN_COMM);
@@ -120,16 +110,7 @@ static HAL_StatusTypeDef set_fans(uint8_t percent)
 
 static HAL_StatusTypeDef set_heaters(uint8_t percent)
 {
-  if (TaskComm485_RequestSetPercent(RS485_STATION_LEFT_HEATER, percent) != HAL_OK)
-  {
-    AutoDevice_SetFault(AUTO_FAULT_485_LEFT_HEATER_COMM);
-    return HAL_ERROR;
-  }
-  if (TaskComm485_RequestSetPercent(RS485_STATION_RIGHT_HEATER, percent) != HAL_OK)
-  {
-    AutoDevice_SetFault(AUTO_FAULT_485_RIGHT_HEATER_COMM);
-    return HAL_ERROR;
-  }
+  if (AutoDevice_SetBlower(percent != 0U) != HAL_OK) return HAL_ERROR;
   if (TaskComm485_RequestSetPercent(RS485_STATION_BOTTOM_HEATER, percent) != HAL_OK)
   {
     AutoDevice_SetFault(AUTO_FAULT_485_BOTTOM_HEATER_COMM);
@@ -149,11 +130,11 @@ static void clean_safe_stop(void)
   ultraviolet_set(0U);
   (void)set_heaters(0U);
   (void)set_fans(0U);
-  (void)AutoDevice_SetOutput(AUTO_OUTPUT_EXHAUST_FAN, 0U);
+  (void)AutoDevice_SetTopFanRunning(0U);
   AutoDevice_AllDangerousOutputsOff();
 }
 
-static uint8_t cabin_is_empty_and_closed(void)
+static uint8_t cabin_is_closed(void)
 {
   if ((AutoDevice_ReadInput(AUTO_INPUT_UPPER_DOOR_CLOSED) == 0U) ||
       (AutoDevice_ReadInput(AUTO_INPUT_LOWER_DOOR_CLOSED) == 0U))
@@ -161,15 +142,7 @@ static uint8_t cabin_is_empty_and_closed(void)
     return 0U;
   }
 
-  /*
-   * 当前没有独立舱内红外/存在输入，暂用上下光幕作为存在检测代理。
-   * 任一光幕触发均禁止自清洁和臭氧消杀。
-   */
-  if ((AutoDevice_ReadInput(AUTO_INPUT_UPPER_LIGHT_CURTAIN) != 0U) ||
-      (AutoDevice_ReadInput(AUTO_INPUT_LOWER_LIGHT_CURTAIN) != 0U))
-  {
-    return 0U;
-  }
+  /* 当前硬件无舱内存在检测，操作前必须人工确认空舱。 */
   return 1U;
 }
 
@@ -228,9 +201,8 @@ static uint32_t self_clean_step_time_ms(uint16_t step_id)
 static void set_all_self_clean_valves(uint8_t enabled)
 {
   (void)AutoDevice_SetOutput(AUTO_OUTPUT_SELF_CLEAN_TOP_VALVE, enabled);
-  (void)AutoDevice_SetOutput(AUTO_OUTPUT_SELF_CLEAN_FRONT_UPPER_VALVE, enabled);
-  (void)AutoDevice_SetOutput(AUTO_OUTPUT_SELF_CLEAN_FRONT_LOWER_VALVE, enabled);
-  (void)AutoDevice_SetOutput(AUTO_OUTPUT_SELF_CLEAN_REAR_VALVE, enabled);
+  (void)AutoDevice_SetOutput(AUTO_OUTPUT_SELF_CLEAN_LOWER_VALVE, enabled);
+  (void)AutoDevice_SetOutput(AUTO_OUTPUT_SELF_CLEAN_TOILET_VALVE, enabled);
 }
 
 static AppFlowStepResult CheckAllow(AppFlowContext *ctx, const AppFlowStep *step)
@@ -239,10 +211,31 @@ static AppFlowStepResult CheckAllow(AppFlowContext *ctx, const AppFlowStep *step
   clean_safe_stop();
   /* 启动前清场完成，允许本轮自清洁后续重新下发485风机/加热命令。 */
   TaskComm485_ReleaseNonzero(COMM485_INHIBIT_SAFE_STOP);
-  return (cabin_is_empty_and_closed() != 0U) ?
-         APP_FLOW_STEP_DONE :
+  if (cabin_is_closed() != 0U)
+  {
+    if (AutoDevice_SetOutput(AUTO_OUTPUT_FLOOR_LIFT, 1U) != HAL_OK) return APP_FLOW_STEP_FAIL;
+    return APP_FLOW_STEP_DONE;
+  }
+  return
          (AutoDevice_SetFault(AUTO_FAULT_SELF_CLEAN_NOT_ALLOWED),
           jump(ctx, 320U));
+}
+
+static uint8_t liquid_available(uint8_t disinfectant)
+{
+  AutoInputPoint input = disinfectant ? AUTO_INPUT_DISINFECTANT_LOW : AUTO_INPUT_CLEAN_LIQUID_LOW;
+  if (AutoDevice_ReadInput(input) == 0U) return 1U;
+  clean_safe_stop();
+  AutoDevice_SetFault(disinfectant ? AUTO_FAULT_DISINFECTANT_LOW : AUTO_FAULT_CLEAN_LIQUID_LOW);
+  AutoDevice_Report(AUTO_REPORT_SENSOR_FAULT);
+  return 0U;
+}
+
+static uint8_t step_liquid_available(uint16_t step_id)
+{
+  if (step_id >= 20U && step_id < 45U) return liquid_available(0U);
+  if (step_id >= 130U && step_id < 150U) return liquid_available(1U);
+  return 1U;
 }
 
 static AppFlowStepResult start_liquid_spray(AutoOutputPoint liquid_valve,
@@ -250,12 +243,7 @@ static AppFlowStepResult start_liquid_spray(AutoOutputPoint liquid_valve,
 {
   const AppRecipe_t *recipe = AppParam_GetActiveRecipe();
 
-  if ((check_disinfectant != 0U) &&
-      (AutoDevice_ReadInput(AUTO_INPUT_DISINFECTANT_LOW) != 0U))
-  {
-    AutoDevice_SetFault(AUTO_FAULT_DISINFECTANT_LOW);
-    return APP_FLOW_STEP_FAIL;
-  }
+  if (liquid_available(check_disinfectant) == 0U) return APP_FLOW_STEP_FAIL;
   (void)AutoDevice_SetOutput(AUTO_OUTPUT_CONDITIONER_VALVE, 0U);
   (void)AutoDevice_SetOutput(AUTO_OUTPUT_DISINFECTANT_VALVE, 0U);
   set_all_self_clean_valves(1U);
@@ -264,13 +252,13 @@ static AppFlowStepResult start_liquid_spray(AutoOutputPoint liquid_valve,
   /* 先确认增压泵命令被接受，避免缺水或互锁时蠕动泵单独消耗药液。 */
   if (AutoDevice_SetBoosterPumpRunning(1U) != HAL_OK)
   {
-    (void)AutoDevice_SetOutput(AUTO_OUTPUT_SCREW_PUMP, 0U);
+    (void)AutoDevice_SetOutput(AUTO_OUTPUT_SELF_CLEAN_PUMP, 0U);
     (void)AutoDevice_SetOutput(liquid_valve, 0U);
     set_all_self_clean_valves(0U);
     AutoDevice_SetFault(AUTO_FAULT_OUTPUT_COMMAND_FAILED);
     return APP_FLOW_STEP_FAIL;
   }
-  if (AutoDevice_SetOutput(AUTO_OUTPUT_SCREW_PUMP, 1U) != HAL_OK)
+  if (AutoDevice_SetOutput(AUTO_OUTPUT_SELF_CLEAN_PUMP, 1U) != HAL_OK)
   {
     (void)AutoDevice_SetBoosterPumpRunning(0U);
     (void)AutoDevice_SetOutput(liquid_valve, 0U);
@@ -320,7 +308,7 @@ static AppFlowStepResult LiquidPathOff(AppFlowContext *ctx, const AppFlowStep *s
   (void)ctx;
   (void)step;
   (void)AutoDevice_SetBoosterPumpRunning(0U);
-  (void)AutoDevice_SetOutput(AUTO_OUTPUT_SCREW_PUMP, 0U);
+  (void)AutoDevice_SetOutput(AUTO_OUTPUT_SELF_CLEAN_PUMP, 0U);
   (void)AutoDevice_SetOutput(AUTO_OUTPUT_CONDITIONER_VALVE, 0U);
   (void)AutoDevice_SetOutput(AUTO_OUTPUT_DISINFECTANT_VALVE, 0U);
   set_all_self_clean_valves(0U);
@@ -334,7 +322,7 @@ static AppFlowStepResult TopRinseOn(AppFlowContext *ctx, const AppFlowStep *step
 
   (void)ctx;
   (void)step;
-  (void)AutoDevice_SetOutput(AUTO_OUTPUT_SCREW_PUMP, 0U);
+  (void)AutoDevice_SetOutput(AUTO_OUTPUT_SELF_CLEAN_PUMP, 0U);
   (void)AutoDevice_SetOutput(AUTO_OUTPUT_CONDITIONER_VALVE, 0U);
   (void)AutoDevice_SetOutput(AUTO_OUTPUT_DISINFECTANT_VALVE, 0U);
   set_all_self_clean_valves(0U);
@@ -350,7 +338,7 @@ static AppFlowStepResult SwitchLeftUpperRinse(AppFlowContext *ctx, const AppFlow
   (void)ctx;
   (void)step;
   (void)AutoDevice_SetOutput(AUTO_OUTPUT_SELF_CLEAN_TOP_VALVE, 0U);
-  (void)AutoDevice_SetOutput(AUTO_OUTPUT_SELF_CLEAN_FRONT_UPPER_VALVE, 1U);
+  (void)AutoDevice_SetOutput(AUTO_OUTPUT_SELF_CLEAN_LOWER_VALVE, 1U);
   phase_tick = AutoDevice_GetProcessTick();
   return APP_FLOW_STEP_DONE;
 }
@@ -359,9 +347,8 @@ static AppFlowStepResult SwitchLowerRearRinse(AppFlowContext *ctx, const AppFlow
 {
   (void)ctx;
   (void)step;
-  (void)AutoDevice_SetOutput(AUTO_OUTPUT_SELF_CLEAN_FRONT_UPPER_VALVE, 0U);
-  (void)AutoDevice_SetOutput(AUTO_OUTPUT_SELF_CLEAN_FRONT_LOWER_VALVE, 1U);
-  (void)AutoDevice_SetOutput(AUTO_OUTPUT_SELF_CLEAN_REAR_VALVE, 1U);
+  (void)AutoDevice_SetOutput(AUTO_OUTPUT_SELF_CLEAN_LOWER_VALVE, 0U);
+  (void)AutoDevice_SetOutput(AUTO_OUTPUT_SELF_CLEAN_TOILET_VALVE, 1U);
   phase_tick = AutoDevice_GetProcessTick();
   return APP_FLOW_STEP_DONE;
 }
@@ -371,7 +358,7 @@ static AppFlowStepResult RinsePathOff(AppFlowContext *ctx, const AppFlowStep *st
   (void)ctx;
   (void)step;
   (void)AutoDevice_SetBoosterPumpRunning(0U);
-  (void)AutoDevice_SetOutput(AUTO_OUTPUT_SCREW_PUMP, 0U);
+  (void)AutoDevice_SetOutput(AUTO_OUTPUT_SELF_CLEAN_PUMP, 0U);
   set_all_self_clean_valves(0U);
   return APP_FLOW_STEP_DONE;
 }
@@ -379,7 +366,7 @@ static AppFlowStepResult RinsePathOff(AppFlowContext *ctx, const AppFlowStep *st
 static AppFlowStepResult CheckEmptyAgain(AppFlowContext *ctx, const AppFlowStep *step)
 {
   (void)step;
-  return (cabin_is_empty_and_closed() != 0U) ?
+  return (cabin_is_closed() != 0U) ?
          APP_FLOW_STEP_DONE : jump(ctx, 350U);
 }
 
@@ -387,11 +374,10 @@ static AppFlowStepResult UvAndVentLow(AppFlowContext *ctx, const AppFlowStep *st
 {
   (void)ctx;
   (void)step;
-  (void)AutoDevice_SetOutput(AUTO_OUTPUT_OZONE, 0U);
   ultraviolet_set(1U);
   dry_fan_percent = SELF_CLEAN_VENT_LOW_PERCENT;
   if ((set_fans(dry_fan_percent) != HAL_OK) ||
-      (AutoDevice_SetOutput(AUTO_OUTPUT_EXHAUST_FAN, 1U) != HAL_OK))
+      (AutoDevice_SetTopFanRunning(1U) != HAL_OK))
   {
     if (AutoDevice_GetFault() == AUTO_FAULT_NONE)
     {
@@ -510,7 +496,7 @@ static AppFlowStepResult StopAir(AppFlowContext *ctx, const AppFlowStep *step)
   ultraviolet_set(0U);
   if ((set_heaters(0U) != HAL_OK) ||
       (set_fans(0U) != HAL_OK) ||
-      (AutoDevice_SetOutput(AUTO_OUTPUT_EXHAUST_FAN, 0U) != HAL_OK))
+      (AutoDevice_SetTopFanRunning(0U) != HAL_OK))
   {
     if (AutoDevice_GetFault() == AUTO_FAULT_NONE)
     {
@@ -570,6 +556,7 @@ static AppFlowStepResult FailDisinfection(AppFlowContext *ctx, const AppFlowStep
 
 static AppFlowStepResult Finish(AppFlowContext *ctx, const AppFlowStep *step)
 {
+  (void)AutoDevice_SetOutput(AUTO_OUTPUT_FLOOR_LIFT, 0U);
   (void)ctx;
   (void)step;
   return APP_FLOW_STEP_DONE;
@@ -606,12 +593,15 @@ HAL_StatusTypeDef CleanProcess_Resume(void)
 {
   const AppRecipe_t *recipe = AppParam_GetActiveRecipe();
   uint16_t step_id = AppFlow_GetCurrentStepId(&clean_flow);
+  if (step_liquid_available(step_id) == 0U) return HAL_ERROR;
+  if (step_id >= 20U && step_id < 370U)
+    if (AutoDevice_SetOutput(AUTO_OUTPUT_FLOOR_LIFT, 1U) != HAL_OK) return HAL_ERROR;
 
   if ((step_id >= 20U) && (step_id < 45U))
   {
     set_all_self_clean_valves(1U);
     (void)AutoDevice_SetOutput(AUTO_OUTPUT_CONDITIONER_VALVE, 1U);
-    (void)AutoDevice_SetOutput(AUTO_OUTPUT_SCREW_PUMP, 1U);
+    (void)AutoDevice_SetOutput(AUTO_OUTPUT_SELF_CLEAN_PUMP, 1U);
     if ((AutoDevice_SetBoosterPumpPercent(recipe->self_clean_liquid_pressure_x10) != HAL_OK) ||
         (AutoDevice_SetBoosterPumpRunning(1U) != HAL_OK))
     {
@@ -631,19 +621,18 @@ HAL_StatusTypeDef CleanProcess_Resume(void)
     }
     else if (step_id < 100U)
     {
-      (void)AutoDevice_SetOutput(AUTO_OUTPUT_SELF_CLEAN_FRONT_UPPER_VALVE, 1U);
+      (void)AutoDevice_SetOutput(AUTO_OUTPUT_SELF_CLEAN_LOWER_VALVE, 1U);
     }
     else
     {
-      (void)AutoDevice_SetOutput(AUTO_OUTPUT_SELF_CLEAN_FRONT_LOWER_VALVE, 1U);
-      (void)AutoDevice_SetOutput(AUTO_OUTPUT_SELF_CLEAN_REAR_VALVE, 1U);
+      (void)AutoDevice_SetOutput(AUTO_OUTPUT_SELF_CLEAN_TOILET_VALVE, 1U);
     }
   }
   else if ((step_id >= 130U) && (step_id < 150U))
   {
     set_all_self_clean_valves(1U);
     (void)AutoDevice_SetOutput(AUTO_OUTPUT_DISINFECTANT_VALVE, 1U);
-    (void)AutoDevice_SetOutput(AUTO_OUTPUT_SCREW_PUMP, 1U);
+    (void)AutoDevice_SetOutput(AUTO_OUTPUT_SELF_CLEAN_PUMP, 1U);
     if ((AutoDevice_SetBoosterPumpPercent(recipe->self_clean_liquid_pressure_x10) != HAL_OK) ||
         (AutoDevice_SetBoosterPumpRunning(1U) != HAL_OK))
     {
@@ -663,19 +652,18 @@ HAL_StatusTypeDef CleanProcess_Resume(void)
     }
     else if (step_id < 210U)
     {
-      (void)AutoDevice_SetOutput(AUTO_OUTPUT_SELF_CLEAN_FRONT_UPPER_VALVE, 1U);
+      (void)AutoDevice_SetOutput(AUTO_OUTPUT_SELF_CLEAN_LOWER_VALVE, 1U);
     }
     else
     {
-      (void)AutoDevice_SetOutput(AUTO_OUTPUT_SELF_CLEAN_FRONT_LOWER_VALVE, 1U);
-      (void)AutoDevice_SetOutput(AUTO_OUTPUT_SELF_CLEAN_REAR_VALVE, 1U);
+      (void)AutoDevice_SetOutput(AUTO_OUTPUT_SELF_CLEAN_TOILET_VALVE, 1U);
     }
   }
   else if ((step_id >= 240U) && (step_id < 300U))
   {
-    ultraviolet_set(1U);
+    ultraviolet_set(step_id < 270U);
     if ((set_fans(dry_fan_percent) != HAL_OK) ||
-        (AutoDevice_SetOutput(AUTO_OUTPUT_EXHAUST_FAN, 1U) != HAL_OK))
+        (AutoDevice_SetTopFanRunning(1U) != HAL_OK))
     {
       return HAL_ERROR;
     }
@@ -690,6 +678,14 @@ HAL_StatusTypeDef CleanProcess_Resume(void)
 
 void CleanProcess_Process(void)
 {
+  if (clean_flow.running && !AutoDevice_IsPaused() &&
+      !AutoDevice_IsEmergencyStopped() && !AutoDevice_IsStopRequested() &&
+      !step_liquid_available(AppFlow_GetCurrentStepId(&clean_flow)))
+  {
+    clean_flow.running = 0U;
+    clean_flow.failed = 1U;
+    return;
+  }
   AppFlow_Process(&clean_flow);
 }
 

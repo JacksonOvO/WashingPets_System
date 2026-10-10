@@ -1,4 +1,5 @@
 #include "temperature_module.h"
+#include "app_param.h"
 #include "rs485_config.h"
 
 #define TEMP_MODULE_FUNC_READ             0x04U
@@ -213,6 +214,14 @@ TemperatureModuleStatus TemperatureModule_ReadAll(
   {
     return TEMPERATURE_MODULE_ERROR_PARAM;
   }
+  /* Disabled channels remain simulated even if the physical module is absent. */
+  for (channel = 0U; channel < 4U; ++channel)
+  {
+    data->valid[channel] = (AppParam_GetHardwareConfig()->temperature_mask & (1U << channel)) == 0U;
+    data->temperature_x10[channel] = data->valid[channel] ?
+        fixed_temperature_x10[channel] : (int16_t)TEMP_MODULE_INVALID_VALUE;
+  }
+  if (AppParam_GetHardwareConfig()->temperature_mask == 0U) return TEMPERATURE_MODULE_OK;
   request[0] = station;
   append_crc(request, 6U);
   status = exchange(request, response, &response_length);
@@ -230,7 +239,7 @@ TemperatureModuleStatus TemperatureModule_ReadAll(
   {
     raw = ((uint16_t)response[3U + channel * 2U] << 8U) |
           response[4U + channel * 2U];
-    if ((RS485_TEMPERATURE_CHANNEL_ENABLE_MASK & (1U << channel)) == 0U)
+    if ((AppParam_GetHardwareConfig()->temperature_mask & (1U << channel)) == 0U)
     {
       data->temperature_x10[channel] = fixed_temperature_x10[channel];
       data->valid[channel] = 1U;

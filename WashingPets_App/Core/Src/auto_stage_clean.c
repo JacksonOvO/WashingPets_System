@@ -53,13 +53,10 @@ static void clean_water_stop(void)
 
 static void set_dry_preheat_outputs(uint8_t fan_percent, uint8_t heater_percent)
 {
-  TaskComm485_RequestSetPercent(RS485_STATION_LEFT_FAN, fan_percent);
-  TaskComm485_RequestSetPercent(RS485_STATION_RIGHT_FAN, fan_percent);
   TaskComm485_RequestSetPercent(RS485_STATION_BOTTOM_FAN, fan_percent);
   TaskComm485_RequestSetPercent(RS485_STATION_TOP_EXHAUST_FAN, fan_percent);
-  TaskComm485_RequestSetPercent(RS485_STATION_LEFT_HEATER, heater_percent);
-  TaskComm485_RequestSetPercent(RS485_STATION_RIGHT_HEATER, heater_percent);
   TaskComm485_RequestSetPercent(RS485_STATION_BOTTOM_HEATER, heater_percent);
+  (void)AutoDevice_SetBlower(heater_percent != 0U);
 }
 
 static void clean_stop(void)

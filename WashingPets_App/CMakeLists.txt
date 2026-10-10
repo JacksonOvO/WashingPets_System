@@ -70,6 +70,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Src/auto_stage_exit.c
     Core/Src/clean_process.c
     Core/Src/oxygen_sensor.c
+    Core/Src/pwm_fan.c
     Core/Src/task_auto.c
     Core/Src/task_clean.c
     Core/Src/task_comm485.c

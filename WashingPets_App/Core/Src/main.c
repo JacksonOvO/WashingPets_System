@@ -336,22 +336,6 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
-  /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOB, EXHAUST_FAN_Pin|OXYGEN_MACHINE_Pin|AIR_FRESHENER_Pin, GPIO_PIN_SET);
-
-  HAL_GPIO_WritePin(OZONE_GPIO_Port, OZONE_Pin, GPIO_PIN_SET);
-  GPIO_InitStruct.Pin = OZONE_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(OZONE_GPIO_Port, &GPIO_InitStruct);
-
-  /*Configure GPIO pin : THYRISTOR_ADD_Pin */
-  GPIO_InitStruct.Pin = THYRISTOR_ADD_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-  GPIO_InitStruct.Pull = GPIO_PULLDOWN;
-  HAL_GPIO_Init(THYRISTOR_ADD_GPIO_Port, &GPIO_InitStruct);
-
   /* APP run and error LEDs are active low. */
   HAL_GPIO_WritePin(APP_ERROR_LED_GPIO_Port, APP_ERROR_LED_Pin, GPIO_PIN_SET);
   HAL_GPIO_WritePin(APP_RUN_LED_GPIO_Port, APP_RUN_LED_Pin, GPIO_PIN_RESET);
@@ -360,13 +344,6 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(APP_RUN_LED_GPIO_Port, &GPIO_InitStruct);
-
-  /*Configure GPIO pins : EXHAUST_FAN_Pin OXYGEN_MACHINE_Pin AIR_FRESHENER_Pin */
-  GPIO_InitStruct.Pin = EXHAUST_FAN_Pin|OXYGEN_MACHINE_Pin|AIR_FRESHENER_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
 

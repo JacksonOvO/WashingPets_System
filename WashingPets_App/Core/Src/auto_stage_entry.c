@@ -1,9 +1,11 @@
 #include "auto_stages.h"
+#include "app_param.h"
 
 #include "auto_device.h"
 #include "task_output.h"
 
 #define DOOR_LOCK_SETTLE_MS       300U
+#define UPPER_DOOR_OPEN_TIMEOUT_MS 30000U
 #define DOOR_LOCK_SYNC_TIMEOUT_MS 100U
 
 static uint8_t upper_locked;
@@ -49,7 +51,7 @@ static const AppFlowStep steps[] = {
   AUTO_STEP(10, "REQUEST_OPEN_UPPER_DOOR", 0U, 0U, RequestOpenUpperDoor, "请求上位机打开上舱门"),
   AUTO_STEP(20, "WAIT_OPEN_UPPER_DOOR_CMD", 0U, 0U, WaitOpenUpperDoor, "等待上位机发送开上舱门命令"),
   AUTO_STEP(30, "UNLOCK_UPPER_DOOR", 0U, 0U, UnlockUpperDoor, "释放上舱门电磁锁"),
-  AUTO_STEP(40, "WAIT_UPPER_DOOR_OPEN", 0U, 0U, WaitUpperDoorOpen, "等待上舱门到位输入解除"),
+  AUTO_STEP(40, "WAIT_UPPER_DOOR_OPEN", 0U, 0U, WaitUpperDoorOpen, "等待上舱门开到位，30秒超时"),
   AUTO_STEP(50, "REPORT_UPPER_DOOR_OPEN", 0U, 0U, ReportUpperDoorOpen, "上舱门已打开"),
   AUTO_STEP(60, "REQUEST_OPEN_LOWER_DOOR", 0U, 0U, RequestOpenLowerDoor, "请求上位机打开下舱门"),
   AUTO_STEP(70, "WAIT_OPEN_LOWER_DOOR_CMD", 0U, 0U, WaitOpenLowerDoor, "等待上位机发送开下舱门命令"),
@@ -72,7 +74,7 @@ static const AppFlowStep steps[] = {
 
 static const AutoStageDefinition stage = {
   "Entering", steps, (uint16_t)(sizeof(steps) / sizeof(steps[0])),
-  EntryInit, EntryReset
+  EntryInit, EntryReset, NULL
 };
 
 static uint8_t consume_command(AutoCommand command)
@@ -139,10 +141,18 @@ static AppFlowStepResult UnlockUpperDoor(AppFlowContext *ctx, const AppFlowStep 
 
 static AppFlowStepResult WaitUpperDoorOpen(AppFlowContext *ctx, const AppFlowStep *step)
 {
-  (void)ctx;
   (void)step;
-  return (upper_door_closed() == 0U) ?
-         APP_FLOW_STEP_DONE : APP_FLOW_STEP_RUNNING;
+  if ((AutoDevice_ReadInput(AUTO_INPUT_UPPER_DOOR_OPEN) != 0U) &&
+      (upper_door_closed() == 0U))
+    return APP_FLOW_STEP_DONE;
+  if ((AutoDevice_GetProcessTick() - ctx->phase_tick) >= UPPER_DOOR_OPEN_TIMEOUT_MS)
+  {
+    AutoDevice_AllDangerousOutputsOff();
+    AutoDevice_SetFault(AUTO_FAULT_UPPER_DOOR_OPEN_TIMEOUT);
+    AutoDevice_Report(AUTO_REPORT_TIMEOUT_FAULT);
+    return APP_FLOW_STEP_FAIL;
+  }
+  return APP_FLOW_STEP_RUNNING;
 }
 
 static AppFlowStepResult ReportUpperDoorOpen(AppFlowContext *ctx, const AppFlowStep *step)
@@ -184,12 +194,9 @@ static AppFlowStepResult WaitLowerDoorOpen(AppFlowContext *ctx, const AppFlowSte
 {
   (void)ctx;
   (void)step;
-#if (AUTO_LOWER_DOOR_SENSOR_BYPASS != 0U)
-  return APP_FLOW_STEP_DONE;
-#else
+  if (AppParam_GetHardwareConfig()->lower_door_bypass) return APP_FLOW_STEP_DONE;
   return (lower_door_closed() == 0U) ?
          APP_FLOW_STEP_DONE : APP_FLOW_STEP_RUNNING;
-#endif
 }
 
 static AppFlowStepResult ReportLowerDoorOpen(AppFlowContext *ctx, const AppFlowStep *step)

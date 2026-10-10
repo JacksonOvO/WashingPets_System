@@ -12,6 +12,7 @@ gi.require_foreign("cairo")
 from gi.repository import Gdk, GdkPixbuf, GLib, Gtk, Pango
 
 import server as core
+from hardware_panel import HardwareConfigPanel
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -89,6 +90,7 @@ class WorkbenchWindow(Gtk.Window):
             ("main", "总览与交互"),
             ("upgrade", "在线升级"),
             ("param", "参数配置"),
+            ("hardware", "工程配置"),
             ("io", "IO 输出控制"),
             ("test", "测试界面"),
         ]
@@ -127,6 +129,7 @@ class WorkbenchWindow(Gtk.Window):
         self.stack.add_titled(self.build_main_page(), "main", "总览与交互")
         self.stack.add_titled(self.build_upgrade_page(), "upgrade", "在线升级")
         self.stack.add_titled(self.build_param_page(), "param", "参数配置")
+        self.stack.add_titled(self.build_hardware_page(), "hardware", "工程配置")
         self.stack.add_titled(self.build_io_page(), "io", "IO 输出控制")
         self.stack.add_titled(self.build_test_page(), "test", "测试界面")
         self.show_page(None, "main")
@@ -289,7 +292,14 @@ class WorkbenchWindow(Gtk.Window):
         panel.pack_start(self.io_status_label, False, False, 0)
         self.io_preview_grid.set_margin_end(4)
         self.io_preview_grid.set_margin_bottom(4)
-        for name in core.INPUT_NAMES + core.OUTPUT_NAMES:
+        preview = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        for index, name in enumerate(core.INPUT_NAMES + core.OUTPUT_NAMES):
+            if index in (core.INPUT_GPIO_COUNT, len(core.INPUT_NAMES)):
+                preview.pack_start(self.io_preview_grid, False, False, 0)
+                title = "独立关门到位 PF15 / PG0" if index == core.INPUT_GPIO_COUNT else "GPIO 输出"
+                preview.pack_start(Gtk.Label(label=title, xalign=0), False, False, 0)
+                self.io_preview_grid = ResponsiveGrid(min_child_width=210, max_columns=4,
+                                                       column_spacing=8, row_spacing=6)
             item = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
             item.get_style_context().add_class("io-status-item")
             dot = Gtk.Label(label="●")
@@ -300,7 +310,8 @@ class WorkbenchWindow(Gtk.Window):
             item.pack_start(label, True, True, 0)
             self.io_preview_grid.add_item(item, expand=False)
             self.io_preview_rows[name] = dot
-        scroll.add(self.io_preview_grid)
+        preview.pack_start(self.io_preview_grid, False, False, 0)
+        scroll.add(preview)
         panel.pack_start(scroll, True, True, 0)
         return panel
 
@@ -328,6 +339,12 @@ class WorkbenchWindow(Gtk.Window):
         panel.pack_start(self.upgrade_status, False, False, 8)
         panel.pack_start(self.log_view(), True, True, 0)
         page.pack_start(panel, True, True, 0)
+        return page
+
+    def build_hardware_page(self):
+        page = page_box()
+        self.hardware_panel = HardwareConfigPanel(core.STATE)
+        page.pack_start(self.hardware_panel, False, False, 0)
         return page
 
     def build_param_page(self):
@@ -377,7 +394,6 @@ class WorkbenchWindow(Gtk.Window):
         self.updating_actuator = False
         row.add_item(self.rs485_combo, expand=True)
         row.add_item(labeled_inline("数值", self.rs485_entry), expand=True)
-        row.add_item(self.actuator_check, expand=True)
         row.add_item(button("启动泵", lambda *_: self.send_action("booster", start=True), "start"), expand=True)
         row.add_item(button("停止泵", lambda *_: self.send_action("booster", start=False), "stop"), expand=True)
         row.add_item(button("设置485", self.set_rs485, "start"), expand=True)
@@ -396,6 +412,7 @@ class WorkbenchWindow(Gtk.Window):
         output_panel.pack_start(self.io_page_status_label, False, False, 0)
         scroll = Gtk.ScrolledWindow()
         self.output_grid = ResponsiveGrid(min_child_width=270, max_columns=4, column_spacing=8, row_spacing=8)
+        lock_grid = ResponsiveGrid(min_child_width=270, max_columns=4, column_spacing=8, row_spacing=8)
         for i, name in enumerate(core.OUTPUT_NAMES):
             sw = OutputToggle()
             sw.connect("notify::active", self.output_changed, i + 1)
@@ -406,8 +423,12 @@ class WorkbenchWindow(Gtk.Window):
             label.set_ellipsize(Pango.EllipsizeMode.END)
             item.pack_start(label, True, True, 0)
             item.pack_start(sw, False, False, 0)
-            self.output_grid.add_item(item, expand=False)
-        scroll.add(self.output_grid)
+            (self.output_grid if i < 39 else lock_grid).add_item(item, expand=False)
+        grids = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        grids.pack_start(self.output_grid, False, False, 0)
+        grids.pack_start(Gtk.Label(label="MAGLOCK1–6", xalign=0), False, False, 0)
+        grids.pack_start(lock_grid, False, False, 0)
+        scroll.add(grids)
         output_panel.pack_start(scroll, True, True, 0)
         page.pack_start(output_panel, True, True, 0)
         return page
@@ -892,6 +913,8 @@ class WorkbenchWindow(Gtk.Window):
                         entry.set_text(str(value))
             finally:
                 self.updating_params = False
+        elif page == "hardware":
+            self.hardware_panel.update_state(snap)
         elif page == "io":
             set_text_if_changed(self.io_page_status_label, snap.get("ioSummary", "未收到 IO 状态"))
             self.render_io(snap["io"], outputs=True)

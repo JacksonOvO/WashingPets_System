@@ -26,6 +26,7 @@ HAL_StatusTypeDef TaskOutput_Request(AppOutputSource source,
                                      uint8_t enabled);
 
 /* 设置顶部13号风机开启时的485功率；关闭输出始终发送0%。 */
+HAL_StatusTypeDef TaskOutput_SetTopFanRunning(uint8_t enabled);
 HAL_StatusTypeDef TaskOutput_SetTopExhaustPercent(uint8_t percent);
 
 /* 自动流程专用：先用OUT38同步闭门器状态，再周期脉冲OUT30直到门磁到位。 */

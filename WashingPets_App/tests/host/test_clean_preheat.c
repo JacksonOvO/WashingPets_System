@@ -7,6 +7,8 @@ static AppRecipe_t recipe;
 static uint32_t tick;
 static uint8_t power[248], temp_valid;
 static unsigned heat_commands;
+static uint8_t blower;
+HAL_StatusTypeDef AutoDevice_SetBlower(uint8_t on) { blower = on; return HAL_OK; }
 static AutoFaultCode fault;
 const AppRecipe_t *AppParam_GetActiveRecipe(void) { return &recipe; }
 uint32_t AutoDevice_GetProcessTick(void) { return tick; }
@@ -26,7 +28,7 @@ HAL_StatusTypeDef AutoDevice_SetBoosterPumpRunning(uint8_t on) { (void)on; retur
 HAL_StatusTypeDef TaskComm485_RequestSetPercent(uint8_t station, uint8_t percent)
 {
   power[station] = percent;
-  if (station == RS485_STATION_LEFT_HEATER && percent) ++heat_commands;
+  if (station == RS485_STATION_BOTTOM_HEATER && percent) ++heat_commands;
   return HAL_OK;
 }
 
@@ -64,8 +66,9 @@ static void check_start(uint32_t duration, uint32_t start)
   assert(heat_commands == 1);
   memset(power, 0, sizeof(power));
   assert(CleanResume(80) == HAL_OK);
-  assert(power[RS485_STATION_LEFT_FAN] == 50);
-  assert(power[RS485_STATION_LEFT_HEATER] == 100);
+  assert(blower);
+  assert(power[RS485_STATION_BOTTOM_FAN] == 50);
+  assert(power[RS485_STATION_BOTTOM_HEATER] == 100);
   tick = start + duration;
   assert(Monitor(NULL, NULL) == APP_FLOW_STEP_DONE);
 }
@@ -89,6 +92,6 @@ int main(void)
   setup(30000, 0);
   temp_valid = 0;
   assert(Monitor(NULL, NULL) == APP_FLOW_STEP_FAIL);
-  assert(power[RS485_STATION_LEFT_HEATER] == 0);
+  assert(power[RS485_STATION_BOTTOM_HEATER] == 0);
   puts("Cleaning: last-60s preheat, short/zero durations, resume, wrap and temperature fault PASS");
 }

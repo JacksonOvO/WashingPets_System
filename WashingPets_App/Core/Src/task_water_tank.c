@@ -46,7 +46,11 @@
 #define WATER_TANK_VALVE_UNKNOWN    0xFFU
 #define WATER_TANK_HOT_DRAIN_MS    20000U
 #define WATER_TANK_WASH_MIX_TOL_X10 10
-#define WATER_TANK_WASH_ADJUST_MS 5000U
+#define WATER_TANK_WASH_ADJUST_MS 3000U
+#define WATER_TANK_WASH_VALVE_SETTLE_MS 1000U
+#define WATER_TANK_WASH_VALVE_ACK_MS 5000U
+#define WATER_TANK_WASH_COARSE_ERROR_X10 30
+#define WATER_TANK_WASH_TREND_X10 2
 #define WATER_TANK_MIX_STALE_MS 5000U
 #define WATER_TANK_WASH_INITIAL_ANGLE 37U
 #define WATER_TANK_TARGET_UNKNOWN  ((int16_t)-32768)
@@ -86,6 +90,17 @@ static uint8_t wash_fill_running;
 static uint8_t wash_valve_angle;
 static uint32_t wash_adjust_tick;
 static uint32_t wash_sample_tick;
+static int16_t wash_previous_mix_x10;
+typedef enum
+{
+  WASH_MOVE_IDLE = 0,
+  WASH_MOVE_WAIT_ACK,
+  WASH_MOVE_SETTLE
+} WashMoveState;
+static WashMoveState wash_move_state;
+static uint8_t wash_command_angle;
+static uint8_t wash_confirmed_angle;
+static uint32_t wash_move_tick;
 static uint8_t hot_drain_active;
 static volatile uint8_t self_clean_prepare_requested;
 static int16_t last_recipe_target_x10 = WATER_TANK_TARGET_UNKNOWN;
@@ -465,7 +480,7 @@ static void water_tank_outputs_off(void)
   (void)AutoDevice_SetOutput(AUTO_OUTPUT_TAP_WATER_VALVE, 0U);
   (void)AutoDevice_SetOutput(AUTO_OUTPUT_STANDBY2_VALVE, 0U);
   (void)AutoDevice_SetOutput(AUTO_OUTPUT_BYPASS_VALVE, 0U);
-  (void)AutoDevice_SetOutput(AUTO_OUTPUT_SELF_CLEAN_REAR_VALVE, 0U);
+  (void)AutoDevice_SetOutput(AUTO_OUTPUT_SELF_CLEAN_TOILET_VALVE, 0U);
   water_tank_booster_off();
   request_valve_angle(0U, 1U);
 }
@@ -475,7 +490,7 @@ static void water_tank_gpio_outputs_off(void)
   (void)AutoDevice_SetOutput(AUTO_OUTPUT_TAP_WATER_VALVE, 0U);
   (void)AutoDevice_SetOutput(AUTO_OUTPUT_STANDBY2_VALVE, 0U);
   (void)AutoDevice_SetOutput(AUTO_OUTPUT_BYPASS_VALVE, 0U);
-  (void)AutoDevice_SetOutput(AUTO_OUTPUT_SELF_CLEAN_REAR_VALVE, 0U);
+  (void)AutoDevice_SetOutput(AUTO_OUTPUT_SELF_CLEAN_TOILET_VALVE, 0U);
 }
 
 static void water_tank_release_process_outputs(void)
@@ -483,14 +498,14 @@ static void water_tank_release_process_outputs(void)
   (void)AutoDevice_SetOutput(AUTO_OUTPUT_TAP_WATER_VALVE, 0U);
   (void)AutoDevice_SetOutput(AUTO_OUTPUT_STANDBY2_VALVE, 0U);
   (void)AutoDevice_SetOutput(AUTO_OUTPUT_BYPASS_VALVE, 0U);
-  (void)AutoDevice_SetOutput(AUTO_OUTPUT_SELF_CLEAN_REAR_VALVE, 0U);
+  (void)AutoDevice_SetOutput(AUTO_OUTPUT_SELF_CLEAN_TOILET_VALVE, 0U);
   request_valve_angle(0U, 1U);
 }
 
 static void start_hot_fill(const AutoSensorData *sensors, const AppRecipe_t *recipe)
 {
   (void)AutoDevice_SetOutput(AUTO_OUTPUT_BYPASS_VALVE, 0U);
-  (void)AutoDevice_SetOutput(AUTO_OUTPUT_SELF_CLEAN_REAR_VALVE, 0U);
+  (void)AutoDevice_SetOutput(AUTO_OUTPUT_SELF_CLEAN_TOILET_VALVE, 0U);
   water_tank_booster_off();
   (void)AutoDevice_SetOutput(AUTO_OUTPUT_TAP_WATER_VALVE, 1U);
   (void)AutoDevice_SetOutput(AUTO_OUTPUT_STANDBY2_VALVE, 1U);
@@ -503,7 +518,7 @@ static void start_hot_fill(const AutoSensorData *sensors, const AppRecipe_t *rec
 static void start_cold_fill(void)
 {
   (void)AutoDevice_SetOutput(AUTO_OUTPUT_BYPASS_VALVE, 0U);
-  (void)AutoDevice_SetOutput(AUTO_OUTPUT_SELF_CLEAN_REAR_VALVE, 0U);
+  (void)AutoDevice_SetOutput(AUTO_OUTPUT_SELF_CLEAN_TOILET_VALVE, 0U);
   water_tank_booster_off();
   (void)AutoDevice_SetOutput(AUTO_OUTPUT_STANDBY2_VALVE, 0U);
   (void)AutoDevice_SetOutput(AUTO_OUTPUT_TAP_WATER_VALVE, 1U);
@@ -519,7 +534,7 @@ static void start_recirc_heat(void)
   (void)AutoDevice_SetOutput(AUTO_OUTPUT_TAP_WATER_VALVE, 0U);
   (void)AutoDevice_SetOutput(AUTO_OUTPUT_STANDBY2_VALVE, 0U);
   (void)AutoDevice_SetOutput(AUTO_OUTPUT_BYPASS_VALVE, 1U);
-  (void)AutoDevice_SetOutput(AUTO_OUTPUT_SELF_CLEAN_REAR_VALVE, 0U);
+  (void)AutoDevice_SetOutput(AUTO_OUTPUT_SELF_CLEAN_TOILET_VALVE, 0U);
   water_tank_recirc_booster_on();
   request_valve_angle(0U, 1U);
 }
@@ -538,7 +553,7 @@ static void start_hot_drain(void)
   (void)AutoDevice_SetOutput(AUTO_OUTPUT_TAP_WATER_VALVE, 0U);
   (void)AutoDevice_SetOutput(AUTO_OUTPUT_STANDBY2_VALVE, 0U);
   (void)AutoDevice_SetOutput(AUTO_OUTPUT_BYPASS_VALVE, 0U);
-  (void)AutoDevice_SetOutput(AUTO_OUTPUT_SELF_CLEAN_REAR_VALVE, 1U);
+  (void)AutoDevice_SetOutput(AUTO_OUTPUT_SELF_CLEAN_TOILET_VALVE, 1U);
   water_tank_booster_off();
   request_valve_angle(0U, 1U);
 }
@@ -567,6 +582,7 @@ static void wash_refill_off(void)
   (void)AutoDevice_SetOutput(AUTO_OUTPUT_STANDBY2_VALVE, 0U);
   request_valve_angle(0U, 1U);
   wash_fill_running = 0U;
+  wash_move_state = WASH_MOVE_IDLE;
 }
 
 static void refill_fault(AutoFaultCode fault)
@@ -575,6 +591,60 @@ static void refill_fault(AutoFaultCode fault)
   AutoDevice_AllDangerousOutputsOff();
   AutoDevice_SetStopRequested(1U);
   AutoDevice_ReportFault(fault, AUTO_REPORT_SENSOR_FAULT);
+}
+
+/* Both legs must move at least 3 degrees, including near the end stops. */
+static uint8_t wash_first_angle(uint8_t from, uint8_t target)
+{
+  int16_t delta = (int16_t)target - from;
+  int16_t intermediate;
+  if ((delta == 0) || (delta >= 3) || (delta <= -3))
+    return target;
+  intermediate = (int16_t)target + ((delta > 0) ? 3 : -3);
+  if ((intermediate < 0) || (intermediate > 90))
+    intermediate = (int16_t)from + ((delta > 0) ? -3 : 3);
+  return (uint8_t)intermediate;
+}
+
+static uint8_t wash_send_angle(uint8_t angle, uint32_t now)
+{
+  if (TaskComm485_RequestSetProportionalValveAngle(angle) != HAL_OK)
+  {
+    refill_fault(AUTO_FAULT_OUTPUT_COMMAND_FAILED);
+    return 0U;
+  }
+  wash_command_angle = angle;
+  wash_move_tick = now;
+  wash_move_state = WASH_MOVE_WAIT_ACK;
+  return 1U;
+}
+
+static uint8_t wash_advance_move(uint32_t now)
+{
+  if (wash_move_state == WASH_MOVE_WAIT_ACK)
+  {
+    if (TaskComm485_GetLastProportionalValveAngle() == wash_command_angle)
+    {
+      wash_confirmed_angle = wash_command_angle;
+      current_valve_angle = wash_command_angle;
+      wash_move_tick = now;
+      wash_move_state = WASH_MOVE_SETTLE;
+    }
+    else if ((now - wash_move_tick) >= WATER_TANK_WASH_VALVE_ACK_MS)
+    {
+      refill_fault(AUTO_FAULT_OUTPUT_COMMAND_FAILED);
+      return 0U;
+    }
+  }
+  else if ((wash_move_state == WASH_MOVE_SETTLE) &&
+           ((now - wash_move_tick) >= WATER_TANK_WASH_VALVE_SETTLE_MS))
+  {
+    if (wash_command_angle != wash_valve_angle)
+      return wash_send_angle(wash_valve_angle, now);
+    wash_move_state = WASH_MOVE_IDLE;
+    wash_adjust_tick = now;
+  }
+  return 1U;
 }
 
 static void process_wash_refill(const AppRecipe_t *recipe)
@@ -605,14 +675,18 @@ static void process_wash_refill(const AppRecipe_t *recipe)
     return;
   }
 
-  /* The output-level high-water cutoff may have reset the valve between ticks. */
+  /* An unrequested angle change can be an output-level high-water cutoff.
+   * A queued adjustment still showing the previous angle is not a cutoff. */
   if ((wash_fill_running != 0U) &&
-      (TaskComm485_GetLastProportionalValveAngle() != wash_valve_angle))
+      (TaskComm485_GetLastProportionalValveAngle() != wash_confirmed_angle) &&
+      !((wash_move_state == WASH_MOVE_WAIT_ACK) &&
+        (TaskComm485_GetLastProportionalValveAngle() == wash_command_angle)))
   {
     wash_fill_running = 0U;
   }
   if (wash_fill_running == 0U)
   {
+    wash_move_state = WASH_MOVE_IDLE;
     /* Wait for a successful 485 write before admitting hot water. */
     if (TaskComm485_RequestSetProportionalValveAngle(wash_valve_angle) != HAL_OK)
     {
@@ -628,29 +702,44 @@ static void process_wash_refill(const AppRecipe_t *recipe)
     current_valve_angle = wash_valve_angle;
     wash_adjust_tick = now;
     wash_sample_tick = sensors.spare_update_tick;
+    wash_previous_mix_x10 = sensors.spare_temperature_x10;
+    wash_confirmed_angle = wash_valve_angle;
     wash_fill_running = 1U;
   }
-  else if (((now - wash_adjust_tick) >= WATER_TANK_WASH_ADJUST_MS) &&
-           (sensors.spare_update_tick != wash_sample_tick) &&
-           (TaskComm485_GetLastProportionalValveAngle() == wash_valve_angle))
+  else
   {
-    int16_t angle = wash_valve_angle;
-    int16_t target = recipe_tank_target_x10(recipe);
-    if (sensors.spare_temperature_x10 > target + WATER_TANK_WASH_MIX_TOL_X10)
-      angle += WATER_TANK_VALVE_MOVE_STEP;
-    else if (sensors.spare_temperature_x10 < target - WATER_TANK_WASH_MIX_TOL_X10)
-      angle -= WATER_TANK_VALVE_MOVE_STEP;
-    uint8_t next_angle = clamp_angle(angle);
-    if ((next_angle != wash_valve_angle) &&
-        (TaskComm485_RequestSetProportionalValveAngle(next_angle) != HAL_OK))
-    {
-      refill_fault(AUTO_FAULT_OUTPUT_COMMAND_FAILED);
+    if (wash_advance_move(now) == 0U)
       return;
+    if (sensors.spare_update_tick != wash_sample_tick)
+    {
+      int16_t error = sensors.spare_temperature_x10 - recipe_tank_target_x10(recipe);
+      int16_t trend = sensors.spare_temperature_x10 - wash_previous_mix_x10;
+      uint8_t approaching = ((error > 0 && trend <= -WATER_TANK_WASH_TREND_X10) ||
+                             (error < 0 && trend >= WATER_TANK_WASH_TREND_X10));
+      wash_sample_tick = sensors.spare_update_tick;
+      wash_previous_mix_x10 = sensors.spare_temperature_x10;
+      if ((wash_move_state == WASH_MOVE_IDLE) &&
+          ((now - wash_adjust_tick) >= WATER_TANK_WASH_ADJUST_MS) &&
+          (approaching == 0U))
+      {
+        int16_t step = ((error > WATER_TANK_WASH_COARSE_ERROR_X10) ||
+                        (error < -WATER_TANK_WASH_COARSE_ERROR_X10)) ? 3 : 1;
+        int16_t angle = wash_valve_angle;
+        if (error > WATER_TANK_WASH_MIX_TOL_X10)
+          angle += step;
+        else if (error < -WATER_TANK_WASH_MIX_TOL_X10)
+          angle -= step;
+        uint8_t target = clamp_angle(angle);
+        if (target != wash_valve_angle)
+        {
+          uint8_t first = wash_first_angle(wash_confirmed_angle, target);
+          wash_valve_angle = target;
+          if (wash_send_angle(first, now) == 0U)
+            return;
+        }
+        wash_adjust_tick = now;
+      }
     }
-    wash_valve_angle = next_angle;
-    current_valve_angle = next_angle;
-    wash_adjust_tick = now;
-    wash_sample_tick = sensors.spare_update_tick;
   }
 
   if ((AutoDevice_SetOutput(AUTO_OUTPUT_TAP_WATER_VALVE, 1U) != HAL_OK) ||

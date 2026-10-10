@@ -282,9 +282,7 @@ class WorkbenchWindow(Gtk.Window):
                     if dirty:
                         rev = pp.get_revision()
                         idx = pp.get_recipe_index()
-                        payload = self.state.build_param_payload(
-                            idx, rev, dirty)
-                        self.state.send(core.CMD_SET_PARAM, payload)
+                        self.state.send_param_update(idx, rev, dirty)
                         pp.mark_clean()
             elif action == "booster":
                 val = 1 if kwargs.get("start") else 0

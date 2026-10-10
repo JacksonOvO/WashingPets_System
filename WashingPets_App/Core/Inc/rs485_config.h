@@ -1,16 +1,29 @@
 #ifndef RS485_CONFIG_H
 #define RS485_CONFIG_H
 
+/* 0: bottom/top thyristors; 1: QX-DO24 CH3/CH4 = bottom/top; CH1/2 unused. */
+#ifndef FAN_USE_PWM_MODULE
+#define FAN_USE_PWM_MODULE              0U
+#endif
+#if (FAN_USE_PWM_MODULE != 0U) && (FAN_USE_PWM_MODULE != 1U)
+#error "FAN_USE_PWM_MODULE must be 0 or 1"
+#endif
+#define RS485_STATION_FAN_PWM           30U
+#define FAN_PWM_FREQUENCY_HZ            1000U
+#define FAN_PWM_FREQUENCY_DECIMALS      1U
+#define FAN_PWM_FREQUENCY_REGISTER      (FAN_PWM_FREQUENCY_HZ * 10U)
+/* PWM amplitude is hardware configured: 10V supply, VCC output switch. */
+
 /* RS485 Modbus slave addresses. Change field addresses here only. */
-#define RS485_STATION_BOOSTER_PUMP      1U  /* 保留旧485增压泵站号；当前增压泵改由OUT29 GPIO控制。 */
+#define RS485_STATION_BOOSTER_PUMP      1U  /* 保留旧485增压泵站号；GPIO模式由OUT31控制，485模式使用站号1。 */
 #define RS485_STATION_PROPORTIONAL_VALVE 2U /* 冷热水比例调节阀 */
-#define RS485_STATION_LEFT_FAN          10U /* 左风机 */
-#define RS485_STATION_RIGHT_FAN         11U /* 右风机 */
+#define RS485_STATION_LEFT_FAN          10U /* Legacy ID, disabled. */
+#define RS485_STATION_RIGHT_FAN         11U /* Legacy ID, disabled. */
 #define RS485_STATION_BOTTOM_FAN        12U /* 底部风机 */
 #define RS485_STATION_TOP_EXHAUST_FAN   13U /* 顶部排风扇 */
 #define RS485_TOP_EXHAUST_PRESENT       1U  /* 顶部排风扇在位开关：0=未接（屏蔽巡检与上电清零），1=已接 */
-#define RS485_STATION_LEFT_HEATER       14U /* 左加热棒 */
-#define RS485_STATION_RIGHT_HEATER      15U /* 右加热棒 */
+#define RS485_STATION_LEFT_HEATER       14U /* Legacy ID, disabled. */
+#define RS485_STATION_RIGHT_HEATER      15U /* Legacy ID, disabled. */
 #define RS485_STATION_BOTTOM_HEATER     16U /* 底部加热棒 */
 #define RS485_STATION_OXYGEN_SENSOR     20U /* 舱外温湿度 / 舱内氧气 */
 #define RS485_STATION_TEMPERATURE       21U /* 四路水温采集模块 */
@@ -24,6 +37,6 @@
 #define RS485_STATION_INCABTRH_SENSOR   22U /* 舱内温湿度 */
 #define RS485_STATION_OZONE_SENSOR      23U /* 舱内臭氧 */
 
-#define RS485_STATION_DEFAULT_THYRISTOR RS485_STATION_LEFT_FAN
+#define RS485_STATION_DEFAULT_THYRISTOR RS485_STATION_BOTTOM_FAN
 
 #endif
